@@ -6,13 +6,23 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from config import Config
 
-# Inicialización del cliente
+# Inicialización del cliente Bot
 bot = Client(
     "HarsubBot", 
     api_id=Config.API_ID, 
     api_hash=Config.API_HASH, 
     bot_token=Config.BOT_TOKEN
 )
+
+# Cliente Premium (se activa solo si hay STRING_SESSION en config.py)
+premium_client = None
+if hasattr(Config, "STRING_SESSION") and Config.STRING_SESSION:
+    premium_client = Client(
+        "PremiumUser", 
+        api_id=Config.API_ID, 
+        api_hash=Config.API_HASH, 
+        session_string=Config.STRING_SESSION
+    )
 
 user_data = {}
 
@@ -76,7 +86,6 @@ async def handle_files(client, message):
     user_id = message.from_user.id
     
     if message.video or (message.document and message.document.mime_type and message.document.mime_type.startswith("video/")):
-        # Valores iniciales por defecto
         user_data[user_id] = {
             "video": message, "subtitle": None, 
             "color": "&HFFFFFF", "size": "24", 
@@ -119,40 +128,32 @@ async def callbacks(client, query: CallbackQuery):
         if user_id in user_data and user_data[user_id]["process"]:
             try:
                 user_data[user_id]["process"].terminate()
-                await query.answer("🛑 Cancelando y enviando lo obtenido...", show_alert=True)
+                await query.answer("🛑 Deteniendo y enviando lo procesado hasta ahora...", show_alert=True)
             except: pass
 
 # --- MOTOR DE PROCESAMIENTO ---
 
 async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
+    chat_id = status_msg.chat.id
     
     v_path = await data["video"].download(progress=progress_bar, progress_args=(status_msg, time.time(), "Descargando Video 📥"))
     s_path = await data["subtitle"].download(progress=progress_bar, progress_args=(status_msg, time.time(), "Descargando SRT 📝"))
 
     output = f"{v_path}_harsub.mp4"
-    
-    # Construcción del estilo ASS para FFmpeg
-    style = (
-        f"PrimaryColour={data['color']},"
-        f"FontSize={data['size']},"
-        f"Italic={data['italic']},"
-        f"BorderStyle=1,"
-        f"Outline={data['outline']},"
-        f"OutlineColour=&H000000" # Contorno siempre negro para legibilidad
-    )
+    style = f"PrimaryColour={data['color']},FontSize={data['size']},Italic={data['italic']},BorderStyle=1,Outline={data['outline']},OutlineColour=&H000000"
 
     await status_msg.edit(
-        "⚙️ **PEGANDO SUBTÍTULOS...**\n\n"
-        f"🎨 Color: `{data['color']}` | 📏 Size: `{data['size']}`\n"
-        "Revisa los logs para ver el avance real.",
+        "⚙️ **PEGANDO SUBTÍTULOS...**\n\nSi cancelas, subiré lo que se haya procesado.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR Y ENVIAR", callback_data="cancel_process")]])
     )
     
+    # Flags especiales (-movflags) para que el video sea reproducible aunque se cancele
     cmd = [
         "ffmpeg", "-i", v_path,
         "-vf", f"subtitles={s_path}:force_style='{style}'",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-c:a", "copy",
+        "-movflags", "frag_keyframe+empty_moov", 
         output, "-y"
     ]
     
@@ -160,32 +161,52 @@ async def run_engine(client, status_msg, user_id):
     user_data[user_id]["process"] = process
     await process.wait()
 
-    # Envío del video (Limpiamos el mensaje antes para refrescar la barra de subida)
-    try: await status_msg.delete()
-    except: pass
-    
-    final_msg = await client.send_message(status_msg.chat.id, "📤 **Iniciando subida del resultado...**")
+    # --- LÓGICA DE SUBIDA (PREMIUM / SPLIT) ---
+    if os.path.exists(output) and os.path.getsize(output) > 50000:
+        f_size = os.path.getsize(output)
+        use_premium = False
+        
+        if premium_client:
+            try:
+                if not premium_client.is_connected: await premium_client.start()
+                use_premium = True
+            except: use_premium = False
 
-    if os.path.exists(output) and os.path.getsize(output) > 5000:
-        try:
-            await client.send_video(
-                chat_id=status_msg.chat.id,
-                video=output,
-                caption="✅ **Hardsub completado.**",
-                progress=progress_bar,
-                progress_args=(final_msg, time.time(), "Subiendo a Telegram 📤")
-            )
-        except Exception as e:
-            await final_msg.edit(f"❌ Error al subir: {e}")
+        files_to_upload = [output]
+        uploader = premium_client if (use_premium and f_size < 4000*1024*1024) else client
+
+        # Si NO es premium y pesa > 2GB, dividimos en partes de 1.9GB
+        if not use_premium and f_size > 2000*1024*1024:
+            await client.send_message(chat_id, "📦 El video supera los 2GB. Dividiendo en partes para la subida...")
+            split_cmd = ["ffmpeg", "-i", output, "-c", "copy", "-map", "0", "-f", "segment", "-segment_size", "1900M", "-reset_timestamps", "1", f"{output}_part%03d.mp4"]
+            await (await asyncio.create_subprocess_exec(*split_cmd)).wait()
+            files_to_upload = sorted([os.path.join(os.path.dirname(output), f) for f in os.listdir(os.path.dirname(output)) if "_part" in f])
+
+        try: await status_msg.delete()
+        except: pass
+
+        for i, f_path in enumerate(files_to_upload):
+            caption = "✅ **Proceso finalizado.**" + (f"\nParte {i+1}" if len(files_to_upload) > 1 else "")
+            up_msg = await client.send_message(chat_id, f"📤 Subiendo parte {i+1}/{len(files_to_upload)}...")
+            try:
+                await uploader.send_video(
+                    chat_id=chat_id,
+                    video=f_path,
+                    caption=caption,
+                    progress=progress_bar,
+                    progress_args=(up_msg, time.time(), f"Subiendo Parte {i+1}")
+                )
+                await up_msg.delete()
+            except Exception as e:
+                await client.send_message(chat_id, f"❌ Error al subir: {e}")
     else:
-        await final_msg.edit("❌ Error: No se generó el video (posible cancelación o falta de espacio).")
+        await status_msg.edit("❌ Error: No hay suficiente video procesado para enviar.")
 
     # Limpieza final
-    for p in [v_path, s_path, output]:
+    to_clean = [v_path, s_path, output] + (files_to_upload if 'files_to_upload' in locals() and len(files_to_upload) > 1 else [])
+    for p in to_clean:
         if os.path.exists(p): os.remove(p)
     if user_id in user_data: del user_data[user_id]
-    try: await final_msg.delete()
-    except: pass
 
 if __name__ == "__main__":
     print("✅ Bot iniciado correctamente.")
