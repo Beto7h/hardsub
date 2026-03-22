@@ -8,8 +8,14 @@ from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
 from config import Config
 
-# Inicialización
-bot = Client("HarsubBot", api_id=Config.API_ID, api_hash=Config.API_HASH, bot_token=Config.BOT_TOKEN)
+# Inicialización con optimización de velocidad
+bot = Client(
+    "HarsubBot", 
+    api_id=Config.API_ID, 
+    api_hash=Config.API_HASH, 
+    bot_token=Config.BOT_TOKEN,
+    workers=50
+)
 
 premium_client = None
 if hasattr(Config, "STRING_SESSION") and Config.STRING_SESSION:
@@ -29,7 +35,6 @@ def get_video_info(file_path):
     except: return 0, 0, 0
 
 def time_to_seconds(time_str):
-    """Convierte formato HH:MM:SS.ms de FFmpeg a segundos"""
     try:
         parts = time_str.split(':')
         return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
@@ -41,40 +46,67 @@ def get_config_menu(user_id):
     c_name = "Amarillo 🟡" if data['color'] == "&H00FFFF" else "Blanco ⚪"
     p_name = {"ultrafast": "Rápido ⚡", "veryfast": "Medio 🏃", "slow": "Lento 🐢"}[data['preset']]
     q_name = {"18": "Alta ⭐", "22": "Buena ✅", "28": "Baja 📉"}[data['crf']]
+    out_name = {0: "Ninguno 🚫", 1: "Fino ✨", 2: "Medio 🖼️"}[data['outline']]
 
     text = (
-        "🎬 **CONFIGURACIÓN DE PROCESADO**\n\n"
+        "🎬 **AJUSTES DE PROCESAMIENTO**\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
         f"🎨 **Color:** `{c_name}`\n"
         f"📏 **Tamaño:** `{data['size']}px`\n"
+        f"🖋️ **Contorno:** `{out_name}`\n"
         f"🚀 **Velocidad:** `{p_name}`\n"
-        f"🎯 **Calidad:** `{q_name}`\n\n"
+        f"🎯 **Calidad:** `{q_name}`\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
         "Ajusta los parámetros antes de iniciar:"
     )
 
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("🟡 Amarillo", callback_data="set_col_&H00FFFF"),
          InlineKeyboardButton("⚪ Blanco", callback_data="set_col_&HFFFFFF")],
-        [InlineKeyboardButton("➖ Menos Tamaño", callback_data="set_siz_down"),
-         InlineKeyboardButton("➕ Más Tamaño", callback_data="set_siz_up")],
+        [InlineKeyboardButton("➖ Tamaño", callback_data="set_siz_down"),
+         InlineKeyboardButton("➕ Tamaño", callback_data="set_siz_up")],
+        [InlineKeyboardButton("🚫 Sin Contorno", callback_data="set_out_0"),
+         InlineKeyboardButton("✨ Fino", callback_data="set_out_1"),
+         InlineKeyboardButton("🖼️ Medio", callback_data="set_out_2")],
         [InlineKeyboardButton("⚡ Rápido", callback_data="set_pre_ultrafast"),
          InlineKeyboardButton("🐢 Lento", callback_data="set_pre_slow")],
-        [InlineKeyboardButton("⭐ Alta Calidad", callback_data="set_crf_18"),
-         InlineKeyboardButton("✅ Buena Calidad", callback_data="set_crf_22")],
+        [InlineKeyboardButton("⭐ Alta", callback_data="set_crf_18"),
+         InlineKeyboardButton("✅ Buena", callback_data="set_crf_22")],
         [InlineKeyboardButton("🚀 INICIAR PROCESO", callback_data="start")]
     ])
     return text, markup
 
-# --- BARRA DE PROGRESO (DESCARGA/SUBIDA) ---
+# --- BARRA DE PROGRESO PROFESIONAL (DESCARGA/SUBIDA) ---
 async def progress_bar(current, total, status_msg, start_time, action):
     now = time.time()
     diff = now - start_time
     if round(diff % 4.00) == 0 or current == total:
         percentage = current * 100 / total
         speed = current / diff if diff > 0 else 0
-        eta = f"{round((total - current) / speed)}s" if speed > 0 else "..."
+        eta = time.strftime('%M:%S', time.gmtime((total - current) / speed)) if speed > 0 else "00:00"
+        
+        # Estilo de bloques solicitado
         bar = "█" * int(percentage / 10) + "░" * (10 - int(percentage / 10))
-        msg = (f"🚀 **{action}**\n\n进度: `{bar}` {round(percentage, 2)}%\n⚡: `{round(speed / 1024 / 1024, 2)} MB/s` \n⏱️ ETA: `{eta}`")
-        try: await status_msg.edit(msg)
+        
+        current_mb = current / 1024 / 1024
+        total_mb = total / 1024 / 1024
+        speed_mb = speed / 1024 / 1024
+
+        msg = (
+            f"◈ **{action}**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 **Progreso:** `{round(percentage, 1)}%`\n"
+            f"✨ **Estado:** `|{bar}|`\n"
+            f"📁 **Datos:** `{round(current_mb, 1)}` / `{round(total_mb, 1)} MB`\n"
+            f"⚡ **Velocidad:** `{round(speed_mb, 2)} MB/s` \n"
+            f"⏳ **Restante:** `{eta}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━━"
+        )
+        
+        # Botón cancelar activo durante la descarga/subida
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]])
+        
+        try: await status_msg.edit(msg, reply_markup=reply_markup)
         except: pass
 
 @bot.on_message(filters.command("start"))
@@ -87,8 +119,8 @@ async def handle_files(client, message):
     if message.video or (message.document and message.document.mime_type and message.document.mime_type.startswith("video/")):
         user_data[user_id] = {
             "video": message, "subtitle": None, "color": "&HFFFFFF", 
-            "size": 24, "italic": "0", "outline": "2", 
-            "preset": "veryfast", "crf": "22", "process": None
+            "size": 24, "italic": "0", "outline": 2, 
+            "preset": "veryfast", "crf": "22", "process": None, "cancel": False
         }
         await message.reply("✅ Video recibido. Ahora envía el archivo **.srt**")
     elif message.document and message.document.file_name and message.document.file_name.endswith(".srt"):
@@ -105,6 +137,7 @@ async def callbacks(client, query: CallbackQuery):
         if type_set == "col": user_data[user_id]["color"] = val
         elif type_set == "pre": user_data[user_id]["preset"] = val
         elif type_set == "crf": user_data[user_id]["crf"] = val
+        elif type_set == "out": user_data[user_id]["outline"] = int(val)
         elif type_set == "siz":
             if val == "up": user_data[user_id]["size"] += 2
             else: user_data[user_id]["size"] = max(12, user_data[user_id]["size"] - 2)
@@ -117,27 +150,36 @@ async def callbacks(client, query: CallbackQuery):
         await query.message.edit("⏳ Iniciando motores...")
         await run_engine(client, query.message, user_id)
 
-    elif query.data == "stop_ffmpeg":
-        if user_id in user_data and user_data[user_id]["process"]:
-            user_data[user_id]["process"].terminate()
-            await query.answer("🛑 Proceso cancelado por el usuario", show_alert=True)
+    elif query.data in ["cancel_all", "stop_ffmpeg"]:
+        if user_id in user_data:
+            user_data[user_id]["cancel"] = True
+            if user_data[user_id]["process"]:
+                try: user_data[user_id]["process"].terminate()
+                except: pass
+            await query.answer("🛑 Proceso cancelado", show_alert=True)
 
-# --- MOTOR DE PROCESAMIENTO CON ETA Y PROGRESO REAL ---
 async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
-    v_path = await data["video"].download(progress=progress_bar, progress_args=(status_msg, time.time(), "Descargando Video 📥"))
-    s_path = await data["subtitle"].download(progress=progress_bar, progress_args=(status_msg, time.time(), "Descargando SRT 📝"))
+    dl_client = premium_client if premium_client else client
+    
+    try:
+        v_path = await dl_client.download_media(data["video"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
+        if data["cancel"]: raise Exception("Cancel")
+        s_path = await client.download_media(data["subtitle"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO SUBTÍTULOS"))
+        if data["cancel"]: raise Exception("Cancel")
+    except:
+        await status_msg.edit("❌ Operación cancelada.")
+        return await clean_up(user_id)
 
     total_duration, w, h = get_video_info(v_path)
     output = f"{v_path}_harsub.mp4"
-    style = f"PrimaryColour={data['color']},FontSize={data['size']},Italic={data['italic']},BorderStyle=1,Outline={data['outline']}"
+    style = f"PrimaryColour={data['color']},FontSize={data['size']},Italic={data['italic']},BorderStyle=1,Outline={data['outline']},Shadow=0"
 
     cmd = [
         "ffmpeg", "-i", v_path,
         "-vf", f"subtitles={s_path}:force_style='{style}'",
         "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"], "-c:a", "copy",
-        "-movflags", "faststart", "-progress", "pipe:1", # Pipe para leer progreso
-        output, "-y"
+        "-movflags", "faststart", "-progress", "pipe:1", output, "-y"
     ]
     
     process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
@@ -146,34 +188,31 @@ async def run_engine(client, status_msg, user_id):
     start_time = time.time()
     last_update = 0
 
-    # Leer la salida de FFmpeg para calcular tiempo
     while True:
         line = await process.stdout.readline()
-        if not line: break
-        
+        if not line or data["cancel"]: break
         text = line.decode().strip()
         if "out_time=" in text:
             time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
             if time_match and total_duration > 0:
-                current_time_str = time_match.group(1)
-                current_seconds = time_to_seconds(current_time_str)
-                
-                # Solo actualizar cada 5 segundos para no saturar Telegram
+                curr_time = time_match.group(1)
+                curr_sec = time_to_seconds(curr_time)
                 if time.time() - last_update > 5:
-                    percentage = (current_seconds / total_duration) * 100
-                    elapsed_time = time.time() - start_time
-                    speed = current_seconds / elapsed_time if elapsed_time > 0 else 0
-                    remaining_seconds = (total_duration - current_seconds) / speed if speed > 0 else 0
-                    
-                    bar = "█" * int(percentage / 10) + "░" * (10 - int(percentage / 10))
+                    perc = (curr_sec / total_duration) * 100
+                    elap = time.time() - start_time
+                    speed = curr_sec / elap if elap > 0 else 0
+                    rem = (total_duration - curr_sec) / speed if speed > 0 else 0
+                    bar = "█" * int(perc / 10) + "░" * (10 - int(perc / 10))
                     
                     msg = (
-                        "⚙️ **PEGANDO SUBTÍTULOS...**\n\n"
-                        f"📊 Progreso: `{bar}` {round(percentage, 1)}%\n"
-                        f"⏱️ Procesado: `{current_time_str}` / `{time.strftime('%H:%M:%S', time.gmtime(total_duration))}`\n"
-                        f"⏳ Restante: `{time.strftime('%H:%M:%S', time.gmtime(remaining_seconds))}`"
+                        "◈ **PEGANDO SUBTÍTULOS**\n"
+                        "━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🎬 **Progreso:** `{round(perc, 1)}%`\n"
+                        f"✨ **Estado:** `|{bar}|`\n"
+                        f"⏱️ **Tiempo:** `{curr_time}` / `{time.strftime('%H:%M:%S', time.gmtime(total_duration))}`\n"
+                        f"⏳ **Restante:** `{time.strftime('%M:%S', time.gmtime(rem))}`\n"
+                        "━━━━━━━━━━━━━━━━━━━━━"
                     )
-                    
                     try:
                         await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
                         last_update = time.time()
@@ -181,37 +220,25 @@ async def run_engine(client, status_msg, user_id):
 
     await process.wait()
 
-    if os.path.exists(output) and user_data[user_id]["process"].returncode == 0:
+    if os.path.exists(output) and not data["cancel"] and process.returncode == 0:
         duration, width, height = get_video_info(output)
-        f_size = os.path.getsize(output)
-        
-        use_premium = False
-        if premium_client:
-            try:
-                if not premium_client.is_connected: await premium_client.start()
-                use_premium = True
-            except: use_premium = False
-
-        uploader = premium_client if (use_premium and f_size < 4000*1024*1024) else client
-        
+        uploader = premium_client if premium_client else client
         up_msg = await client.send_message(status_msg.chat.id, "📤 Subiendo video final...")
         await uploader.send_video(
-            chat_id=status_msg.chat.id,
-            video=output,
-            caption="✅ **Proceso finalizado con éxito.**",
-            duration=duration, width=width, height=height,
-            supports_streaming=True,
-            progress=progress_bar,
-            progress_args=(up_msg, time.time(), "Subiendo Video 📤")
+            chat_id=status_msg.chat.id, video=output, caption="✅ **¡Proceso completado!**",
+            duration=duration, width=width, height=height, supports_streaming=True,
+            progress=progress_bar, progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
         )
         await up_msg.delete()
         await status_msg.delete()
     else:
-        await status_msg.edit("❌ El proceso fue cancelado o hubo un error.")
+        await status_msg.edit("❌ Proceso cancelado o fallido.")
 
-    # Limpieza
-    for p in [v_path, s_path, output]:
-        if os.path.exists(p): os.remove(p)
+    await clean_up(user_id, v_path, s_path, output)
+
+async def clean_up(user_id, v=None, s=None, o=None):
+    for p in [v, s, o]:
+        if p and os.path.exists(p): os.remove(p)
     if user_id in user_data: del user_data[user_id]
 
 if __name__ == "__main__":
