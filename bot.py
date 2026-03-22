@@ -76,37 +76,43 @@ def get_config_menu(user_id):
     ])
     return text, markup
 
-# --- BARRA DE PROGRESO PROFESIONAL (DESCARGA/SUBIDA) ---
+# --- BARRA DE PROGRESO PROFESIONAL (CON CANCELACIÓN REACTIVA) ---
 async def progress_bar(current, total, status_msg, start_time, action):
+    user_id = status_msg.chat.id
+    
+    # DETECCIÓN DE CANCELACIÓN: Si el usuario dio clic, forzamos el error para parar Pyrogram
+    if user_data.get(user_id, {}).get("cancel"):
+        raise Exception("STOP_PROCESS")
+
     now = time.time()
     diff = now - start_time
-    if round(diff % 4.00) == 0 or current == total:
+    # Refresco cada 5 segundos para estabilidad
+    if round(diff % 5.00) == 0 or current == total:
         percentage = current * 100 / total
         speed = current / diff if diff > 0 else 0
         eta = time.strftime('%M:%S', time.gmtime((total - current) / speed)) if speed > 0 else "00:00"
         
-        # Estilo de bloques solicitado
         bar = "█" * int(percentage / 10) + "░" * (10 - int(percentage / 10))
-        
-        current_mb = current / 1024 / 1024
-        total_mb = total / 1024 / 1024
-        speed_mb = speed / 1024 / 1024
+        cur_mb = current / 1024 / 1024
+        tot_mb = total / 1024 / 1024
+        spd_mb = speed / 1024 / 1024
 
         msg = (
             f"◈ **{action}**\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 **Progreso:** `{round(percentage, 1)}%`\n"
             f"✨ **Estado:** `|{bar}|`\n"
-            f"📁 **Datos:** `{round(current_mb, 1)}` / `{round(total_mb, 1)} MB`\n"
-            f"⚡ **Velocidad:** `{round(speed_mb, 2)} MB/s` \n"
+            f"📁 **Datos:** `{round(cur_mb, 1)}` / `{round(tot_mb, 1)} MB`\n"
+            f"⚡ **Velocidad:** `{round(spd_mb, 2)} MB/s` \n"
             f"⏳ **Restante:** `{eta}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━"
         )
         
-        # Botón cancelar activo durante la descarga/subida
-        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]])
-        
-        try: await status_msg.edit(msg, reply_markup=reply_markup)
+        try:
+            await status_msg.edit(
+                msg, 
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]])
+            )
         except: pass
 
 @bot.on_message(filters.command("start"))
@@ -156,19 +162,27 @@ async def callbacks(client, query: CallbackQuery):
             if user_data[user_id]["process"]:
                 try: user_data[user_id]["process"].terminate()
                 except: pass
-            await query.answer("🛑 Proceso cancelado", show_alert=True)
+            await query.answer("🛑 Deteniendo proceso...", show_alert=True)
+            await query.message.edit("❌ **Operación cancelada por el usuario.**")
 
 async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     dl_client = premium_client if premium_client else client
     
+    # Asegurar conexión de cliente premium
+    if premium_client and not premium_client.is_connected:
+        try: await premium_client.start()
+        except: dl_client = client
+
     try:
         v_path = await dl_client.download_media(data["video"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
         if data["cancel"]: raise Exception("Cancel")
+        
         s_path = await client.download_media(data["subtitle"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO SUBTÍTULOS"))
         if data["cancel"]: raise Exception("Cancel")
-    except:
-        await status_msg.edit("❌ Operación cancelada.")
+    except Exception as e:
+        if str(e) != "STOP_PROCESS":
+            await status_msg.edit("❌ Operación detenida.")
         return await clean_up(user_id)
 
     total_duration, w, h = get_video_info(v_path)
@@ -224,21 +238,27 @@ async def run_engine(client, status_msg, user_id):
         duration, width, height = get_video_info(output)
         uploader = premium_client if premium_client else client
         up_msg = await client.send_message(status_msg.chat.id, "📤 Subiendo video final...")
-        await uploader.send_video(
-            chat_id=status_msg.chat.id, video=output, caption="✅ **¡Proceso completado!**",
-            duration=duration, width=width, height=height, supports_streaming=True,
-            progress=progress_bar, progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
-        )
-        await up_msg.delete()
+        try:
+            await uploader.send_video(
+                chat_id=status_msg.chat.id, video=output, caption="✅ **¡Proceso completado!**",
+                duration=duration, width=width, height=height, supports_streaming=True,
+                progress=progress_bar, progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
+            )
+            await up_msg.delete()
+        except Exception as e:
+            if str(e) == "STOP_PROCESS": await up_msg.edit("❌ Subida cancelada.")
         await status_msg.delete()
     else:
-        await status_msg.edit("❌ Proceso cancelado o fallido.")
+        if not data["cancel"]:
+            await status_msg.edit("❌ Error en el procesamiento de FFmpeg.")
 
     await clean_up(user_id, v_path, s_path, output)
 
 async def clean_up(user_id, v=None, s=None, o=None):
     for p in [v, s, o]:
-        if p and os.path.exists(p): os.remove(p)
+        if p and os.path.exists(p):
+            try: os.remove(p)
+            except: pass
     if user_id in user_data: del user_data[user_id]
 
 if __name__ == "__main__":
