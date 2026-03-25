@@ -2,11 +2,34 @@ import os
 import asyncio
 import time
 import re
+import shutil
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
 from config import Config
+
+# --- FUNCIÓN DE LIMPIEZA INICIAL ---
+# Se ejecuta apenas abres el bot para asegurar que el disco esté limpio
+def clear_downloads():
+    print("🧹 Limpiando carpeta de descargas...")
+    folder = "downloads" # O usa Config.DOWNLOAD_LOCATION si la tienes definida
+    if os.path.exists(folder):
+        for filename in os.listdir(folder):
+            file_path = os.path.join(folder, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                print(f'❌ Error al borrar {file_path}: {e}')
+    else:
+        os.makedirs(folder)
+    print("✅ Carpeta de descargas lista.")
+
+# Llamada inmediata antes de iniciar Pyrogram
+clear_downloads()
 
 # Inicialización
 bot = Client(
@@ -45,6 +68,33 @@ def time_to_seconds(time_str):
         parts = time_str.split(':')
         return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
     except: return 0
+
+# --- NUEVO: COMANDO DE ESTADO ---
+@bot.on_message(filters.command("status"))
+async def status_check(client, message):
+    chat_id = message.chat.id
+    status_text = "📊 **ESTADO DEL SISTEMA**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    status_text += "🤖 **Bot:** `CONECTADO ✅` \n"
+    
+    if premium_client:
+        try:
+            if not premium_client.is_connected: await premium_client.start()
+            me = await premium_client.get_me()
+            status_text += f"🌟 **Premium:** `ACTIVO ✅` ({me.first_name})\n"
+            try:
+                await premium_client.get_chat(chat_id)
+                status_text += "👁️ **Acceso al chat:** `SÍ ✅` \n"
+            except:
+                status_text += "👁️ **Acceso al chat:** `NO ❌` (Escribe algo aquí con tu cuenta personal)\n"
+        except Exception as e:
+            status_text += f"🌟 **Premium:** `ERROR ❌` ({str(e)[:30]})\n"
+    else:
+        status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
+
+    total, used, free = shutil.disk_usage("/")
+    status_text += f"━━━━━━━━━━━━━━━━━━━━━\n"
+    status_text += f"💾 **Disco Libre:** `{free // (2**30)} GB`"
+    await message.reply(status_text)
 
 def get_config_menu(user_id):
     data = user_data[user_id]
@@ -156,13 +206,10 @@ async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     chat_id = status_msg.chat.id
     
-    # Manejo robusto de la sesión Premium
     dl_client = client
     if premium_client:
         try:
-            if not premium_client.is_connected:
-                await premium_client.start()
-            # Forzamos reconocimiento del chat
+            if not premium_client.is_connected: await premium_client.start()
             await premium_client.get_chat(chat_id)
             dl_client = premium_client
         except Exception as e:
@@ -172,6 +219,12 @@ async def run_engine(client, status_msg, user_id):
     try:
         v_path = await dl_client.download_media(data["video"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
         s_path = await client.download_media(data["subtitle"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO SUBTÍTULOS"))
+        
+        # Validación extra para el SRT
+        if os.path.getsize(s_path) < 10:
+             await status_msg.edit("❌ El archivo de subtítulos está vacío.")
+             return await clean_up(user_id, v_path, s_path)
+
     except Exception as e:
         await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
@@ -205,7 +258,6 @@ async def run_engine(client, status_msg, user_id):
     await process.wait()
 
     if os.path.exists(output) and not data["cancel"]:
-        # Subida con el cliente que tenga la sesión (Premium si funcionó, sino el Bot)
         up_msg = await dl_client.send_message(chat_id, "📤 **Subiendo video final...**")
         try:
             duration, width, height = get_video_info(output)
@@ -229,4 +281,5 @@ async def clean_up(user_id, v=None, s=None, o=None):
     if user_id in user_data: del user_data[user_id]
 
 if __name__ == "__main__":
+    print("🚀 Bot iniciado...")
     bot.run()
