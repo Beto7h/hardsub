@@ -15,7 +15,7 @@ class Config:
     # --- CANAL DE RESPALDO / LOGS ---
     # ID del canal o grupo donde se enviarán copias de los archivos o logs
     # Tip: Los IDs de canales suelen empezar con -100
-    CHAT_DUMP = int(os.environ.get("CHAT_DUMP", 0))
+    DUMP_CHAT_ID = int(os.environ.get("DUMP_CHAT_ID", 0))
 
     # --- SESIÓN PREMIUM ---
     # Necesaria para subir archivos de hasta 4GB y que la barra de progreso sea visible.
