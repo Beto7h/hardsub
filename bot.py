@@ -76,10 +76,10 @@ async def status_check(client, message):
             me = await premium_client.get_me()
             status_text += f"🌟 **Premium:** `ACTIVO ✅` ({me.first_name})\n"
             try:
-                await premium_client.get_chat(chat_id)
-                status_text += "👁️ **Acceso al chat:** `SÍ ✅` \n"
+                await premium_client.get_chat(Config.DUMP_CHAT_ID)
+                status_text += "📂 **Canal Dump:** `VINCULADO ✅` \n"
             except:
-                status_text += "👁️ **Acceso al chat:** `NO ❌` (Escribe algo aquí)\n"
+                status_text += "📂 **Canal Dump:** `ERROR ❌` (Revisa ID)\n"
         except Exception as e:
             status_text += f"🌟 **Premium:** `ERROR ❌` ({str(e)[:20]})\n"
     else:
@@ -197,36 +197,45 @@ async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     chat_id = status_msg.chat.id
     
-    # --- LÓGICA DE DESCARGA RÁPIDA (PREMIUM) ---
+    # --- NUEVA LÓGICA CON CANAL DUMP ---
     dl_client = client
     video_to_download = data["video"]
-    
+
+    # 1. Reenvío al Dump (asegura que el Peer ID sea válido)
+    try:
+        await status_msg.edit("📡 **Sincronizando con Canal Dump...**")
+        dump_msg = await data["video"].forward(Config.DUMP_CHAT_ID)
+        video_to_download = dump_msg
+    except Exception as e:
+        print(f"Error Dump: {e}")
+        # Si falla el dump, seguimos con el video original como respaldo
+
+    # 2. Activar sesión Premium desde el Dump
     if premium_client:
         try:
             if not premium_client.is_connected: await premium_client.start()
-            # TRUCO: Re-enviamos el video a la sesión premium para que el "Peer ID" sea válido localmente
-            temp_msg = await premium_client.get_messages(chat_id, data["video"].id)
-            if temp_msg:
-                video_to_download = temp_msg
+            
+            # La sesión premium busca el video en el Dump (garantizado que lo encuentra)
+            premium_video_msg = await premium_client.get_messages(Config.DUMP_CHAT_ID, dump_msg.id)
+            if premium_video_msg:
+                video_to_download = premium_video_msg
                 dl_client = premium_client
-                print("🚀 Modo rápido activado")
+                print("🚀 Descarga Premium desde Dump activada")
         except Exception as e:
-            print(f"⚠️ Error activando modo rápido: {e}")
+            print(f"⚠️ Fallo Premium, usando bot: {e}")
             dl_client = client
 
     try:
-        # Descarga el video con el cliente Premium si está disponible
+        # Descarga
         v_path = await dl_client.download_media(
             video_to_download, 
             progress=progress_bar, 
             progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO")
         )
-        # El subtítulo es pequeño, se puede bajar con el bot normal
         s_path = await client.download_media(data["subtitle"])
         
-        # Validación de SRT (Tu captura mostraba un archivo de 64B, muy sospechoso)
         if os.path.getsize(s_path) < 100:
-             await status_msg.edit("❌ **Error:** El archivo SRT está vacío o dañado (pesa < 100 bytes).")
+             await status_msg.edit("❌ **Error:** El archivo SRT está vacío o dañado.")
              return await clean_up(user_id, v_path, s_path)
 
     except Exception as e:
@@ -276,6 +285,10 @@ async def run_engine(client, status_msg, user_id):
         except Exception as e:
             await up_msg.edit(f"❌ Error subida: {e}")
 
+    # Limpiar mensaje en Dump al terminar
+    try: await dump_msg.delete()
+    except: pass
+    
     await clean_up(user_id, v_path, s_path, output)
 
 async def clean_up(user_id, v=None, s=None, o=None):
