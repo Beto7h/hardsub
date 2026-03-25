@@ -12,6 +12,11 @@ class Config:
     # --- DATOS DEL BOT ---
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
+    # --- CANAL DE RESPALDO / LOGS ---
+    # ID del canal o grupo donde se enviarán copias de los archivos o logs
+    # Tip: Los IDs de canales suelen empezar con -100
+    CHAT_DUMP = int(os.environ.get("CHAT_DUMP", 0))
+
     # --- SESIÓN PREMIUM ---
     # Necesaria para subir archivos de hasta 4GB y que la barra de progreso sea visible.
     STRING_SESSION = os.environ.get("STRING_SESSION", "")
