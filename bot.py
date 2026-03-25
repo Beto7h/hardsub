@@ -165,16 +165,28 @@ async def callbacks(client, query: CallbackQuery):
 
 async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
-    uploader = premium_client if premium_client else client
-    if premium_client and not premium_client.is_connected:
-        try: await premium_client.start()
-        except: uploader = client
+    chat_id = status_msg.chat.id
+    
+    # Inicialización del uploader
+    uploader = client
+    if premium_client:
+        if not premium_client.is_connected:
+            try: await premium_client.start()
+            except: pass
+        
+        # Validación crítica para evitar PeerIdInvalid
+        try:
+            await premium_client.get_chat(chat_id)
+            uploader = premium_client
+        except Exception:
+            uploader = client
 
     try:
+        # Usamos el cliente premium para descargar si está disponible (evita cuellos de botella)
         v_path = await uploader.download_media(data["video"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
         s_path = await client.download_media(data["subtitle"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO SUBTÍTULOS"))
     except Exception as e:
-        await status_msg.edit(f"❌ Error: {e}")
+        await status_msg.edit(f"❌ Error en descarga: {e}")
         return await clean_up(user_id)
 
     total_duration, w, h = get_video_info(v_path)
@@ -200,23 +212,32 @@ async def run_engine(client, status_msg, user_id):
                 curr_sec = time_to_seconds(time_match.group(1))
                 perc = (curr_sec / total_duration) * 100
                 bar = "█" * int(perc / 10) + "░" * (10 - int(perc / 10))
-                try: await status_msg.edit(f"◈ **PEGANDO SUBTÍTULOS**\n━━━━━━━━━━━━\n🎬 `{round(perc, 1)}%` | `|{bar}|`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
+                try: 
+                    await status_msg.edit(
+                        f"◈ **PEGANDO SUBTÍTULOS**\n━━━━━━━━━━━━\n🎬 `{round(perc, 1)}%` | `|{bar}|`", 
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]])
+                    )
                 except: pass
 
     await process.wait()
 
     if os.path.exists(output) and not data["cancel"]:
-        up_msg = await uploader.send_message(status_msg.chat.id, "📤 **Subiendo video final...**")
+        # El uploader envía su propio mensaje para garantizar barra de progreso en 2GB+
+        up_msg = await uploader.send_message(chat_id, "📤 **Subiendo video final...**")
         try:
             duration, width, height = get_video_info(output)
             await uploader.send_video(
-                chat_id=status_msg.chat.id, video=output, caption="✅ **¡Proceso completado!**",
+                chat_id=chat_id, 
+                video=output, 
+                caption="✅ **¡Proceso completado!**",
                 duration=duration, width=width, height=height, supports_streaming=True,
-                progress=progress_bar, progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
+                progress=progress_bar, 
+                progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
             )
             await up_msg.delete()
             await status_msg.delete()
-        except: pass
+        except Exception as e:
+            await up_msg.edit(f"❌ Error en subida: {e}")
 
     await clean_up(user_id, v_path, s_path, output)
 
