@@ -1,24 +1,26 @@
 import os
 from dotenv import load_dotenv
 
-# Carga el archivo .env si existe
+# Carga las variables desde un archivo .env si existe
 load_dotenv()
 
 class Config:
-    # --- DATOS DE TELEGRAM ---
+    # --- CREDENCIALES DE TELEGRAM ---
+    # Se obtienen de https://my.telegram.org
     API_ID = int(os.environ.get("API_ID", 0))
     API_HASH = os.environ.get("API_HASH", "")
     
-    # --- DATOS DEL BOT ---
+    # El token que te da @BotFather
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-    # --- CANAL DE RESPALDO / LOGS ---
-    # ID del canal o grupo donde se enviarán copias de los archivos o logs
-    # Tip: Los IDs de canales suelen empezar con -100
+    # --- CANAL DUMP (LOGS / RESPALDO) ---
+    # IMPORTANTE: En tu código usas 'DUMP_CHAT_ID'. 
+    # Asegúrate de que sea el ID numérico (ej: -100123456789)
     DUMP_CHAT_ID = int(os.environ.get("DUMP_CHAT_ID", 0))
 
-    # --- SESIÓN PREMIUM ---
-    # Necesaria para subir archivos de hasta 4GB y que la barra de progreso sea visible.
+    # --- SESIÓN PREMIUM (OPCIONAL) ---
+    # Si dejas esto vacío, el bot usará la cuenta normal del Bot.
+    # Si pones el String Session, usará los beneficios Premium para descargar/subir.
     STRING_SESSION = os.environ.get("STRING_SESSION", "")
     
     # --- CONFIGURACIÓN DE ALMACENAMIENTO ---
