@@ -201,28 +201,25 @@ async def run_engine(client, status_msg, user_id):
     dl_client = client
     video_to_download = data["video"]
 
-    # 1. Reenvío al Dump (asegura que el Peer ID sea válido)
+    # 1. Reenvío al Dump
     try:
         await status_msg.edit("📡 **Sincronizando con Canal Dump...**")
         dump_msg = await data["video"].forward(Config.DUMP_CHAT_ID)
         video_to_download = dump_msg
     except Exception as e:
         print(f"Error Dump: {e}")
-        # Si falla el dump, seguimos con el video original como respaldo
 
     # 2. Activar sesión Premium desde el Dump
     if premium_client:
         try:
             if not premium_client.is_connected: await premium_client.start()
-            
-            # La sesión premium busca el video en el Dump (garantizado que lo encuentra)
             premium_video_msg = await premium_client.get_messages(Config.DUMP_CHAT_ID, dump_msg.id)
             if premium_video_msg:
                 video_to_download = premium_video_msg
                 dl_client = premium_client
-                print("🚀 Descarga Premium desde Dump activada")
+                print("🚀 Descarga Premium activada")
         except Exception as e:
-            print(f"⚠️ Fallo Premium, usando bot: {e}")
+            print(f"⚠️ Fallo Premium: {e}")
             dl_client = client
 
     try:
@@ -234,9 +231,8 @@ async def run_engine(client, status_msg, user_id):
         )
         s_path = await client.download_media(data["subtitle"])
         
-        if os.path.getsize(s_path) < 100:
-             await status_msg.edit("❌ **Error:** El archivo SRT está vacío o dañado.")
-             return await clean_up(user_id, v_path, s_path)
+        # --- RESTRICCIÓN DE PESO ELIMINADA ---
+        # Ahora el bot procesará el SRT sin importar los bytes.
 
     except Exception as e:
         await status_msg.edit(f"❌ Error descarga: {e}")
@@ -285,7 +281,6 @@ async def run_engine(client, status_msg, user_id):
         except Exception as e:
             await up_msg.edit(f"❌ Error subida: {e}")
 
-    # Limpiar mensaje en Dump al terminar
     try: await dump_msg.delete()
     except: pass
     
