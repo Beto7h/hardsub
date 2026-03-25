@@ -8,7 +8,7 @@ from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
 from config import Config
 
-# Inicialización con optimización de velocidad
+# Inicialización
 bot = Client(
     "HarsubBot", 
     api_id=Config.API_ID, 
@@ -29,7 +29,7 @@ if hasattr(Config, "STRING_SESSION") and Config.STRING_SESSION:
 
 user_data = {}
 
-# --- UTILIDADES DE VIDEO ---
+# --- UTILIDADES ---
 def get_video_info(file_path):
     try:
         metadata = extractMetadata(createParser(file_path))
@@ -46,7 +46,6 @@ def time_to_seconds(time_str):
         return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
     except: return 0
 
-# --- MENÚ DE CONFIGURACIÓN ---
 def get_config_menu(user_id):
     data = user_data[user_id]
     c_name = "Amarillo 🟡" if data['color'] == "&H00FFFF" else "Blanco ⚪"
@@ -64,8 +63,7 @@ def get_config_menu(user_id):
         f"🖋️ **Contorno:** `{out_name}`\n"
         f"🚀 **Velocidad:** `{p_name}`\n"
         f"🎯 **Calidad:** `{q_name}`\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Ajusta los parámetros antes de iniciar:"
+        "━━━━━━━━━━━━━━━━━━━━━"
     )
 
     markup = InlineKeyboardMarkup([
@@ -87,12 +85,10 @@ def get_config_menu(user_id):
     ])
     return text, markup
 
-# --- BARRA DE PROGRESO ---
 async def progress_bar(current, total, status_msg, start_time, action):
     user_id = status_msg.chat.id
     if user_data.get(user_id, {}).get("cancel"):
         raise Exception("STOP_PROCESS")
-
     now = time.time()
     diff = now - start_time
     if round(diff % 5.00) == 0 or current == total:
@@ -100,16 +96,13 @@ async def progress_bar(current, total, status_msg, start_time, action):
         speed = current / diff if diff > 0 else 0
         eta = time.strftime('%M:%S', time.gmtime((total - current) / speed)) if speed > 0 else "00:00"
         bar = "█" * int(percentage / 10) + "░" * (10 - int(percentage / 10))
-        
         msg = (
-            f"◈ **{action}**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"◈ **{action}**\n━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 **Progreso:** `{round(percentage, 1)}%` | `|{bar}|`\n"
             f"⚡ **Velocidad:** `{round(speed / 1024 / 1024, 2)} MB/s` \n"
             f"⏳ **Restante:** `{eta}`"
         )
-        try:
-            await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+        try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
         except: pass
 
 @bot.on_message(filters.command("start"))
@@ -119,7 +112,7 @@ async def start_cmd(client, message):
 @bot.on_message(filters.video | filters.document)
 async def handle_files(client, message):
     user_id = message.from_user.id
-    if message.video or (message.document and message.document.mime_type and message.document.mime_type.startswith("video/")):
+    if message.video or (message.document and message.document.mime_type and "video" in message.document.mime_type):
         user_data[user_id] = {
             "video": message, "subtitle": None, "color": "&HFFFFFF", 
             "size": 24, "italic": "0", "outline": 2, "font": "Arial",
@@ -137,23 +130,19 @@ async def callbacks(client, query: CallbackQuery):
     user_id = query.from_user.id
     if query.data.startswith("set_"):
         parts = query.data.split("_")
-        type_set = parts[1]
-        val = parts[2]
-        
+        type_set, val = parts[1], parts[2]
         if type_set == "col": user_data[user_id]["color"] = val
         elif type_set == "fnt": user_data[user_id]["font"] = val
         elif type_set == "pre": user_data[user_id]["preset"] = val
         elif type_set == "crf": user_data[user_id]["crf"] = val
         elif type_set == "out": user_data[user_id]["outline"] = int(val)
         elif type_set == "siz":
-            if val == "up": user_data[user_id]["size"] += 2
-            else: user_data[user_id]["size"] = max(12, user_data[user_id]["size"] - 2)
-        
+            user_data[user_id]["size"] = user_data[user_id]["size"] + 2 if val == "up" else max(12, user_data[user_id]["size"] - 2)
         text, markup = get_config_menu(user_id)
         try: await query.message.edit(text, reply_markup=markup)
         except: pass
     elif query.data == "start":
-        await query.message.edit("⏳ Preparando archivos...")
+        await query.message.edit("⏳ Preparando sesión...")
         await run_engine(client, query.message, user_id)
     elif query.data in ["cancel_all", "stop_ffmpeg"]:
         if user_id in user_data:
@@ -167,31 +156,29 @@ async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     chat_id = status_msg.chat.id
     
-    # Inicialización del uploader
-    uploader = client
+    # Manejo robusto de la sesión Premium
+    dl_client = client
     if premium_client:
-        if not premium_client.is_connected:
-            try: await premium_client.start()
-            except: pass
-        
-        # Validación crítica para evitar PeerIdInvalid
         try:
+            if not premium_client.is_connected:
+                await premium_client.start()
+            # Forzamos reconocimiento del chat
             await premium_client.get_chat(chat_id)
-            uploader = premium_client
-        except Exception:
-            uploader = client
+            dl_client = premium_client
+        except Exception as e:
+            print(f"Sesión Premium no disponible para este chat: {e}")
+            dl_client = client
 
     try:
-        # Usamos el cliente premium para descargar si está disponible (evita cuellos de botella)
-        v_path = await uploader.download_media(data["video"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
+        v_path = await dl_client.download_media(data["video"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
         s_path = await client.download_media(data["subtitle"], progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO SUBTÍTULOS"))
     except Exception as e:
-        await status_msg.edit(f"❌ Error en descarga: {e}")
+        await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
 
     total_duration, w, h = get_video_info(v_path)
     output = f"{v_path}_harsub.mp4"
-    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Italic={data['italic']},BorderStyle=1,Outline={data['outline']},Shadow=0"
+    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0"
 
     cmd = [
         "ffmpeg", "-i", v_path, "-vf", f"subtitles={s_path}:force_style='{style}'",
@@ -212,32 +199,25 @@ async def run_engine(client, status_msg, user_id):
                 curr_sec = time_to_seconds(time_match.group(1))
                 perc = (curr_sec / total_duration) * 100
                 bar = "█" * int(perc / 10) + "░" * (10 - int(perc / 10))
-                try: 
-                    await status_msg.edit(
-                        f"◈ **PEGANDO SUBTÍTULOS**\n━━━━━━━━━━━━\n🎬 `{round(perc, 1)}%` | `|{bar}|`", 
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]])
-                    )
+                try: await status_msg.edit(f"◈ **PEGANDO SUBTÍTULOS**\n━━━━━━━━━━━━\n🎬 `{round(perc, 1)}%` | `|{bar}|`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
                 except: pass
 
     await process.wait()
 
     if os.path.exists(output) and not data["cancel"]:
-        # El uploader envía su propio mensaje para garantizar barra de progreso en 2GB+
-        up_msg = await uploader.send_message(chat_id, "📤 **Subiendo video final...**")
+        # Subida con el cliente que tenga la sesión (Premium si funcionó, sino el Bot)
+        up_msg = await dl_client.send_message(chat_id, "📤 **Subiendo video final...**")
         try:
             duration, width, height = get_video_info(output)
-            await uploader.send_video(
-                chat_id=chat_id, 
-                video=output, 
-                caption="✅ **¡Proceso completado!**",
+            await dl_client.send_video(
+                chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
                 duration=duration, width=width, height=height, supports_streaming=True,
-                progress=progress_bar, 
-                progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
+                progress=progress_bar, progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
             )
             await up_msg.delete()
             await status_msg.delete()
         except Exception as e:
-            await up_msg.edit(f"❌ Error en subida: {e}")
+            await up_msg.edit(f"❌ Error subida: {e}")
 
     await clean_up(user_id, v_path, s_path, output)
 
