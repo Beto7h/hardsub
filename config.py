@@ -1,29 +1,30 @@
 import os
 from dotenv import load_dotenv
 
-# Carga el archivo .env si existe (útil para pruebas locales o en VPS como Contabo)
+# Carga el archivo .env si existe
 load_dotenv()
 
 class Config:
-    # --- DATOS DE TELEGRAM (Obtenlos en my.telegram.org) ---
+    # --- DATOS DE TELEGRAM ---
     API_ID = int(os.environ.get("API_ID", 0))
     API_HASH = os.environ.get("API_HASH", "")
     
-    # --- DATOS DEL BOT (Obtenlo de @BotFather) ---
+    # --- DATOS DEL BOT ---
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-    # --- SESIÓN PREMIUM (OPCIONAL) ---
-    # Pega aquí tu String Session si quieres subir archivos de hasta 4GB.
-    # Si lo dejas vacío "", el bot dividirá automáticamente los videos de más de 2GB.
+    # --- SESIÓN PREMIUM ---
+    # Necesaria para subir archivos de hasta 4GB y que la barra de progreso sea visible.
     STRING_SESSION = os.environ.get("STRING_SESSION", "")
     
     # --- CONFIGURACIÓN DE ALMACENAMIENTO ---
-    # En Koyeb se recomienda "/tmp", en Contabo "./downloads" está bien.
     DOWNLOAD_LOCATION = os.environ.get("DOWNLOAD_LOCATION", "./downloads")
     
     # --- CONFIGURACIÓN DE FFmpeg / HARSUB (Valores Iniciales) ---
     DEFAULT_COLOR = "&HFFFFFF"      # Blanco (BGR format)
-    DEFAULT_FONT_SIZE = "24"
-    DEFAULT_FONT_NAME = "Arial"
-    DEFAULT_ITALIC = "0"           # 0 = Recta, 1 = Cursiva
-    DEFAULT_OUTLINE = "2"          # 2 = Con contorno negro, 0 = Sin contorno
+    DEFAULT_FONT_NAME = "Arial"     # Fuente por defecto
+    DEFAULT_FONT_SIZE = 24          # Tamaño en px
+    DEFAULT_OUTLINE = 2             # 2 = Medio, 1 = Fino, 0 = Sin contorno
+    
+    # --- AJUSTES DE CODIFICACIÓN ---
+    DEFAULT_PRESET = "veryfast"     # Velocidad de proceso
+    DEFAULT_CRF = "24"              # Calidad (18 alta, 24 buena, 28 baja)
