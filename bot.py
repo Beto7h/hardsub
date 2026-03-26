@@ -70,7 +70,7 @@ def humanbytes(size):
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
-# --- BARRA DE PROGRESO (DESCARGA/SUBIDA) ---
+# --- BARRA DE PROGRESO ---
 async def progress_bar(current, total, status_msg, start_time, action):
     user_id = status_msg.chat.id
     if user_data.get(user_id, {}).get("cancel"):
@@ -102,7 +102,6 @@ async def progress_bar(current, total, status_msg, start_time, action):
     try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
     except: pass
 
-# --- COMANDO STATUS ---
 @bot.on_message(filters.command("status"))
 async def status_check(client, message):
     status_text = "📊 **ESTADO DEL SISTEMA**\n━━━━━━━━━━━━━━━━━━━━━\n"
@@ -117,7 +116,7 @@ def get_config_menu(user_id):
     data = user_data[user_id]
     c_name = "Amarillo 🟡" if data['color'] == "&H00FFFF" else "Blanco ⚪"
     p_name = {"ultrafast": "Rápido ⚡", "veryfast": "Medio 🏃", "slow": "Lento 🐢"}[data['preset']]
-    q_name = {"18": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}[data['crf']]
+    q_name = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}[data['crf']]
     out_name = {0: "Ninguno 🚫", 1: "Fino ✨", 2: "Medio 🖼️"}[data['outline']]
     
     text = (
@@ -145,7 +144,7 @@ def get_config_menu(user_id):
          InlineKeyboardButton("🖼️ Medio", callback_data="set_out_2")],
         [InlineKeyboardButton("⚡ Rápido", callback_data="set_pre_ultrafast"),
          InlineKeyboardButton("🐢 Lento", callback_data="set_pre_slow")],
-        [InlineKeyboardButton("⭐ Alta", callback_data="set_crf_18"),
+        [InlineKeyboardButton("⭐ Alta", callback_data="set_crf_20"),
          InlineKeyboardButton("✅ Buena", callback_data="set_crf_24")],
         [InlineKeyboardButton("🚀 INICIAR PROCESO", callback_data="start")]
     ])
@@ -235,16 +234,23 @@ async def run_engine(client, status_msg, user_id):
     output = f"{v_path}_harsub.mp4"
     style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0"
 
+    # --- COMANDO FFMPEG OPTIMIZADO PARA COMPATIBILIDAD Y STREAMING ---
     cmd = [
         "ffmpeg", "-i", v_path, "-vf", f"subtitles={s_path}:force_style='{style}'",
-        "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"], "-c:a", "copy",
-        "-threads", "0", "-movflags", "faststart", "-progress", "pipe:1", output, "-y"
+        "-c:v", "libx264", 
+        "-preset", data["preset"], 
+        "-crf", data["crf"], 
+        "-profile:v", "main", "-level", "4.0", # Compatibilidad Nekogram/Móviles
+        "-pix_fmt", "yuv420p", # Formato de color universal
+        "-c:a", "copy",
+        "-threads", "0", 
+        "-movflags", "+faststart", # Habilita streaming instantáneo
+        "-progress", "pipe:1", output, "-y"
     ]
     
     process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     user_data[user_id]["process"] = process
 
-    # --- BUCLE DE PROGRESO FFmpeg ---
     while True:
         line = await process.stdout.readline()
         if not line or data["cancel"]: break
@@ -259,9 +265,7 @@ async def run_engine(client, status_msg, user_id):
         if time_match:
             current_time_str = time_match.group(1)
             curr_sec = time_to_seconds(current_time_str)
-            
-            if total_duration > 0 and curr_sec >= (total_duration - 1):
-                break
+            if total_duration > 0 and curr_sec >= (total_duration - 1): break
 
             now = time.time()
             if (now - user_data[user_id]["last_upd"]) >= 5:
@@ -270,20 +274,15 @@ async def run_engine(client, status_msg, user_id):
                 raw_speed = user_data[user_id].get("current_speed", "0.0")
                 f_speed = float(raw_speed)
                 
-                if f_speed > 0:
-                    eta_sec = (total_duration - curr_sec) / f_speed
-                    eta_ffmpeg = time.strftime('%H:%M:%S', time.gmtime(max(0, eta_sec)))
-                else:
-                    eta_ffmpeg = "Calculando..."
+                eta_ffmpeg = time.strftime('%H:%M:%S', time.gmtime(max(0, (total_duration - curr_sec) / f_speed))) if f_speed > 0 else "Calculando..."
 
                 bar = "█" * int(perc / 10) + "░" * (10 - int(perc / 10))
-                
                 msg = (
                     f"🎬 **PEGANDO SUBTÍTULOS**\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n"
                     f"📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|`\n"
                     f"🕒 **Tiempo video:** `{current_time_str}` / `{time.strftime('%H:%M:%S', time.gmtime(total_duration))}`\n"
-                    f"⚡ **Velocidad Real:** `{raw_speed}x` \n"
+                    f"⚡ **Velocidad:** `{raw_speed}x` \n"
                     f"⏳ **Restante:** `{eta_ffmpeg}`\n"
                     f"━━━━━━━━━━━━━━━━━━━━━"
                 )
@@ -292,39 +291,28 @@ async def run_engine(client, status_msg, user_id):
 
     await process.wait()
 
-    # --- SUBIDA FINAL CON SOPORTE PREMIUM > 2GB ---
+    # --- SUBIDA FINAL CON SOPORTE PREMIUM ---
     if os.path.exists(output) and not data["cancel"]:
-        await status_msg.edit("📤 **Pegado listo. Analizando archivo...**")
-        
+        await status_msg.edit("📤 **Analizando archivo final...**")
         file_size = os.path.getsize(output)
-        up_client = bot # Por defecto el bot
+        up_client = bot 
         
-        # Validación de Cliente Premium para archivos grandes
         if file_size > 2000 * 1024 * 1024:
             if premium_client:
                 up_client = premium_client
-                await status_msg.edit("🌟 **Detectado archivo > 2GB. Usando sesión Premium...**")
+                await status_msg.edit("🌟 **Archivo > 2GB detectado. Usando sesión Premium...**")
             else:
-                await status_msg.edit("❌ **Error:** El video pesa más de 2GB y no hay sesión Premium configurada.")
+                await status_msg.edit("❌ **Error:** El video supera los 2GB y no tienes sesión Premium configurada.")
                 return await clean_up(user_id, v_path, s_path, output)
 
         try:
             duration, width, height = get_video_info(output)
-            
-            # Asegurar conexión del cliente premium
-            if up_client == premium_client and not premium_client.is_connected:
-                await premium_client.start()
+            if up_client == premium_client and not premium_client.is_connected: await premium_client.start()
 
             await up_client.send_video(
-                chat_id=chat_id, 
-                video=output, 
-                caption="✅ **¡Proceso completado!**",
-                duration=duration, 
-                width=width, 
-                height=height, 
-                supports_streaming=True,
-                progress=progress_bar, 
-                progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
+                chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
+                duration=duration, width=width, height=height, supports_streaming=True,
+                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
             )
             await status_msg.delete()
         except Exception as e:
