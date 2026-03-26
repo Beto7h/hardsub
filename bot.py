@@ -260,7 +260,6 @@ async def run_engine(client, status_msg, user_id):
             current_time_str = time_match.group(1)
             curr_sec = time_to_seconds(current_time_str)
             
-            # SALIDA FORZADA: Si el tiempo procesado llega al final, rompemos el bucle
             if total_duration > 0 and curr_sec >= (total_duration - 1):
                 break
 
@@ -293,16 +292,39 @@ async def run_engine(client, status_msg, user_id):
 
     await process.wait()
 
-    # --- SUBIDA FINAL ---
+    # --- SUBIDA FINAL CON SOPORTE PREMIUM > 2GB ---
     if os.path.exists(output) and not data["cancel"]:
-        # Reciclamos el status_msg para la subida
-        await status_msg.edit("📤 **Pegado listo. Iniciando subida...**")
+        await status_msg.edit("📤 **Pegado listo. Analizando archivo...**")
+        
+        file_size = os.path.getsize(output)
+        up_client = bot # Por defecto el bot
+        
+        # Validación de Cliente Premium para archivos grandes
+        if file_size > 2000 * 1024 * 1024:
+            if premium_client:
+                up_client = premium_client
+                await status_msg.edit("🌟 **Detectado archivo > 2GB. Usando sesión Premium...**")
+            else:
+                await status_msg.edit("❌ **Error:** El video pesa más de 2GB y no hay sesión Premium configurada.")
+                return await clean_up(user_id, v_path, s_path, output)
+
         try:
             duration, width, height = get_video_info(output)
-            await dl_client.send_video(
-                chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
-                duration=duration, width=width, height=height, supports_streaming=True,
-                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
+            
+            # Asegurar conexión del cliente premium
+            if up_client == premium_client and not premium_client.is_connected:
+                await premium_client.start()
+
+            await up_client.send_video(
+                chat_id=chat_id, 
+                video=output, 
+                caption="✅ **¡Proceso completado!**",
+                duration=duration, 
+                width=width, 
+                height=height, 
+                supports_streaming=True,
+                progress=progress_bar, 
+                progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
             )
             await status_msg.delete()
         except Exception as e:
