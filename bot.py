@@ -244,13 +244,12 @@ async def run_engine(client, status_msg, user_id):
     process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     user_data[user_id]["process"] = process
 
-    # --- BUCLE DE PROGRESO FFmpeg MEJORADO ---
+    # --- BUCLE DE PROGRESO FFmpeg ---
     while True:
         line = await process.stdout.readline()
         if not line or data["cancel"]: break
         text = line.decode().strip()
         
-        # Leemos datos en cada línea pero editamos cada 5 seg
         time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
         speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
 
@@ -258,14 +257,17 @@ async def run_engine(client, status_msg, user_id):
             user_data[user_id]["current_speed"] = speed_match.group(1)
 
         if time_match:
+            current_time_str = time_match.group(1)
+            curr_sec = time_to_seconds(current_time_str)
+            
+            # SALIDA FORZADA: Si el tiempo procesado llega al final, rompemos el bucle
+            if total_duration > 0 and curr_sec >= (total_duration - 1):
+                break
+
             now = time.time()
             if (now - user_data[user_id]["last_upd"]) >= 5:
                 user_data[user_id]["last_upd"] = now
-                
-                current_time_str = time_match.group(1)
-                curr_sec = time_to_seconds(current_time_str)
                 perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
-                
                 raw_speed = user_data[user_id].get("current_speed", "0.0")
                 f_speed = float(raw_speed)
                 
@@ -291,19 +293,20 @@ async def run_engine(client, status_msg, user_id):
 
     await process.wait()
 
+    # --- SUBIDA FINAL ---
     if os.path.exists(output) and not data["cancel"]:
-        up_msg = await dl_client.send_message(chat_id, "📤 **Subiendo video final...**")
+        # Reciclamos el status_msg para la subida
+        await status_msg.edit("📤 **Pegado listo. Iniciando subida...**")
         try:
             duration, width, height = get_video_info(output)
             await dl_client.send_video(
                 chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
                 duration=duration, width=width, height=height, supports_streaming=True,
-                progress=progress_bar, progress_args=(up_msg, time.time(), "SUBIENDO RESULTADO")
+                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
             )
-            await up_msg.delete()
             await status_msg.delete()
         except Exception as e:
-            await up_msg.edit(f"❌ Error subida: {e}")
+            await status_msg.edit(f"❌ Error subida: {e}")
 
     try: await dump_msg.delete()
     except: pass
