@@ -79,7 +79,6 @@ async def progress_bar(current, total, status_msg, start_time, action):
     now = time.time()
     diff = now - start_time
     
-    # Actualización estricta cada 5 segundos
     last_update = user_data.get(user_id, {}).get("last_upd", 0)
     if (now - last_update) < 5 and current != total:
         return
@@ -236,7 +235,6 @@ async def run_engine(client, status_msg, user_id):
     output = f"{v_path}_harsub.mp4"
     style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0"
 
-    # FFmpeg Process
     cmd = [
         "ffmpeg", "-i", v_path, "-vf", f"subtitles={s_path}:force_style='{style}'",
         "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"], "-c:a", "copy",
@@ -245,7 +243,6 @@ async def run_engine(client, status_msg, user_id):
     
     process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     user_data[user_id]["process"] = process
-    start_ffmpeg = time.time()
 
     while True:
         line = await process.stdout.readline()
@@ -253,33 +250,41 @@ async def run_engine(client, status_msg, user_id):
         text = line.decode().strip()
         
         now = time.time()
-        if "out_time=" in text and (now - user_data[user_id]["last_upd"]) >= 5:
+        # Captura el tiempo actual procesado por FFmpeg
+        time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
+        
+        if time_match and (now - user_data[user_id]["last_upd"]) >= 5:
             user_data[user_id]["last_upd"] = now
-            time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
-            speed_match = re.search(r"speed=(\d+\.?\d*)x", text)
+            current_time_str = time_match.group(1)
+            curr_sec = time_to_seconds(current_time_str)
             
-            if time_match and total_duration > 0:
-                current_time_str = time_match.group(1)
-                curr_sec = time_to_seconds(current_time_str)
-                perc = (curr_sec / total_duration) * 100
-                
-                f_speed = speed_match.group(1) if speed_match else "0.0"
-                eta_sec = (total_duration - curr_sec) / float(f_speed) if float(f_speed) > 0 else 0
-                eta_ffmpeg = time.strftime('%H:%M:%S', time.gmtime(eta_sec))
-                
-                bar = "█" * int(perc / 10) + "░" * (10 - int(perc / 10))
-                
-                msg = (
-                    f"🎬 **PEGANDO SUBTÍTULOS**\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|`\n"
-                    f"🕒 **Tiempo video:** `{current_time_str}` / `{time.strftime('%H:%M:%S', time.gmtime(total_duration))}`\n"
-                    f"⚡ **Velocidad:** `{f_speed}x` \n"
-                    f"⏳ **Faltan:** `{eta_ffmpeg}`\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━"
-                )
-                try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
-                except: pass
+            # Regex mejorado para detectar velocidad incluso con espacios
+            speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
+            raw_speed = speed_match.group(1) if speed_match else "0.1"
+            f_speed = float(raw_speed)
+
+            perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
+            
+            # Cálculo de ETA Dinámico
+            if f_speed > 0:
+                eta_sec = (total_duration - curr_sec) / f_speed
+                eta_ffmpeg = time.strftime('%H:%M:%S', time.gmtime(max(0, eta_sec)))
+            else:
+                eta_ffmpeg = "00:00:00"
+            
+            bar = "█" * int(perc / 10) + "░" * (10 - int(perc / 10))
+            
+            msg = (
+                f"🎬 **PEGANDO SUBTÍTULOS**\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|`\n"
+                f"🕒 **Tiempo video:** `{current_time_str}` / `{time.strftime('%H:%M:%S', time.gmtime(total_duration))}`\n"
+                f"⚡ **Velocidad:** `{raw_speed}x` \n"
+                f"⏳ **Faltan:** `{eta_ffmpeg}`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━"
+            )
+            try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
+            except: pass
 
     await process.wait()
 
