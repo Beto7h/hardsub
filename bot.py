@@ -220,31 +220,45 @@ async def run_engine(client, status_msg, user_id):
         except: dl_client = client
 
     try:
+        # MEJORA: Normalización del nombre del Video
+        file_info = video_to_download.video or video_to_download.document
+        ext = file_info.file_name.split('.')[-1] if hasattr(file_info, 'file_name') else "mp4"
+        
         v_path = await dl_client.download_media(
             video_to_download, 
+            file_name=f"downloads/video_{user_id}.{ext}",
             progress=progress_bar, 
             progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO")
         )
-        s_path = await client.download_media(data["subtitle"])
+        # MEJORA: Normalización del nombre del Subtítulo
+        s_path = await client.download_media(
+            data["subtitle"],
+            file_name=f"downloads/sub_{user_id}.srt"
+        )
     except Exception as e:
         await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
 
+    await status_msg.edit("🎬 **Iniciando pegado de subtítulos...**")
     total_duration, w, h = get_video_info(v_path)
-    output = f"{v_path}_harsub.mp4"
+    output = f"downloads/final_{user_id}.mp4"
     style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0"
 
-    # --- COMANDO FFMPEG OPTIMIZADO PARA COMPATIBILIDAD Y STREAMING ---
+    # MEJORA: Escapado de rutas absoluto para evitar errores de FFmpeg
+    clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
+    clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
+
     cmd = [
-        "ffmpeg", "-i", v_path, "-vf", f"subtitles={s_path}:force_style='{style}'",
+        "ffmpeg", "-i", clean_v_path, 
+        "-vf", f"subtitles='{clean_s_path}':force_style='{style}'",
         "-c:v", "libx264", 
         "-preset", data["preset"], 
         "-crf", data["crf"], 
-        "-profile:v", "main", "-level", "4.0", # Compatibilidad Nekogram/Móviles
-        "-pix_fmt", "yuv420p", # Formato de color universal
+        "-profile:v", "main", "-level", "4.0",
+        "-pix_fmt", "yuv420p", 
         "-c:a", "copy",
         "-threads", "0", 
-        "-movflags", "+faststart", # Habilita streaming instantáneo
+        "-movflags", "+faststart", 
         "-progress", "pipe:1", output, "-y"
     ]
     
@@ -291,7 +305,6 @@ async def run_engine(client, status_msg, user_id):
 
     await process.wait()
 
-    # --- SUBIDA FINAL CON SOPORTE PREMIUM ---
     if os.path.exists(output) and not data["cancel"]:
         await status_msg.edit("📤 **Analizando archivo final...**")
         file_size = os.path.getsize(output)
