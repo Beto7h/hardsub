@@ -220,7 +220,7 @@ async def run_engine(client, status_msg, user_id):
         except: dl_client = client
 
     try:
-        # MEJORA: Normalización del nombre del Video
+        # NORMALIZACIÓN DE NOMBRES
         file_info = video_to_download.video or video_to_download.document
         ext = file_info.file_name.split('.')[-1] if hasattr(file_info, 'file_name') else "mp4"
         
@@ -230,7 +230,6 @@ async def run_engine(client, status_msg, user_id):
             progress=progress_bar, 
             progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO")
         )
-        # MEJORA: Normalización del nombre del Subtítulo
         s_path = await client.download_media(
             data["subtitle"],
             file_name=f"downloads/sub_{user_id}.srt"
@@ -239,18 +238,24 @@ async def run_engine(client, status_msg, user_id):
         await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
 
-    await status_msg.edit("🎬 **Iniciando pegado de subtítulos...**")
+    await status_msg.edit("🎬 **Iniciando pegado (Aspect Correction)...**")
     total_duration, w, h = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
-    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0"
+    
+    # Estilo optimizado: Alignment=2 (centro-abajo) y MarginV=20 (margen de seguridad)
+    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment=2,MarginV=20"
 
-    # MEJORA: Escapado de rutas absoluto para evitar errores de FFmpeg
+    # ESCAPE DE RUTAS ABSOLUTO
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
+    # FILTRO PROTECTOR: setsar=1 estabiliza el aspecto para que el subtítulo no se estire
+    # scale asegura dimensiones pares para el códec H.264 manteniendo la resolución original
+    video_filter = f"setsar=1,scale=w='if(gt(iw,ih),-2,iw)':h='if(gt(iw,ih),ih,-2)',subtitles='{clean_s_path}':force_style='{style}'"
+
     cmd = [
         "ffmpeg", "-i", clean_v_path, 
-        "-vf", f"subtitles='{clean_s_path}':force_style='{style}'",
+        "-vf", video_filter,
         "-c:v", "libx264", 
         "-preset", data["preset"], 
         "-crf", data["crf"], 
@@ -306,16 +311,16 @@ async def run_engine(client, status_msg, user_id):
     await process.wait()
 
     if os.path.exists(output) and not data["cancel"]:
-        await status_msg.edit("📤 **Analizando archivo final...**")
+        await status_msg.edit("📤 **Subiendo video final...**")
         file_size = os.path.getsize(output)
         up_client = bot 
         
         if file_size > 2000 * 1024 * 1024:
             if premium_client:
                 up_client = premium_client
-                await status_msg.edit("🌟 **Archivo > 2GB detectado. Usando sesión Premium...**")
+                await status_msg.edit("🌟 **Archivo > 2GB. Usando sesión Premium...**")
             else:
-                await status_msg.edit("❌ **Error:** El video supera los 2GB y no tienes sesión Premium configurada.")
+                await status_msg.edit("❌ **Error:** Supera 2GB sin sesión Premium.")
                 return await clean_up(user_id, v_path, s_path, output)
 
         try:
