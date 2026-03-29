@@ -220,7 +220,6 @@ async def run_engine(client, status_msg, user_id):
         except: dl_client = client
 
     try:
-        # NORMALIZACIÓN DE NOMBRES
         file_info = video_to_download.video or video_to_download.document
         ext = file_info.file_name.split('.')[-1] if hasattr(file_info, 'file_name') else "mp4"
         
@@ -238,20 +237,20 @@ async def run_engine(client, status_msg, user_id):
         await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
 
-    await status_msg.edit("🎬 **Iniciando pegado (Aspect Correction)...**")
+    await status_msg.edit("🎬 **Iniciando pegado (Respetando Proporciones)...**")
     total_duration, w, h = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
     
-    # Estilo optimizado: Alignment=2 (centro-abajo) y MarginV=20 (margen de seguridad)
     style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment=2,MarginV=20"
 
-    # ESCAPE DE RUTAS ABSOLUTO
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # FILTRO PROTECTOR: setsar=1 estabiliza el aspecto para que el subtítulo no se estire
-    # scale asegura dimensiones pares para el códec H.264 manteniendo la resolución original
-    video_filter = f"setsar=1,scale=w='if(gt(iw,ih),-2,iw)':h='if(gt(iw,ih),ih,-2)',subtitles='{clean_s_path}':force_style='{style}'"
+    # MEJORA DEFINITIVA PARA EVITAR DEFORMACIÓN:
+    # 1. 'scale=-2:ih' mantiene el alto original y ajusta el ancho a par de forma proporcional.
+    # 2. 'setsar=1' asegura que los píxeles sean cuadrados.
+    # 3. 'pad' añade un píxel negro si la resolución sigue siendo impar para el códec.
+    video_filter = f"scale='if(gt(iw,ih),-2,iw)':'if(gt(iw,ih),ih,-2)',setsar=1,pad='ceil(iw/2)*2':'ceil(ih/2)*2':(ow-iw)/2:(oh-ih)/2,subtitles='{clean_s_path}':force_style='{style}'"
 
     cmd = [
         "ffmpeg", "-i", clean_v_path, 
