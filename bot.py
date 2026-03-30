@@ -3,6 +3,7 @@ import asyncio
 import time
 import re
 import shutil
+import signal
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from hachoir.metadata import extractMetadata
@@ -70,21 +71,19 @@ def humanbytes(size):
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
-# --- PROGRESO (DESCARGA/SUBIDA) ---
+# --- PROGRESO OPTIMIZADO CON CANCELACIÓN ---
 async def progress_bar(current, total, status_msg, start_time, action):
     user_id = status_msg.chat.id
     if user_data.get(user_id, {}).get("cancel"):
         raise Exception("STOP_PROCESS")
     
     now = time.time()
-    diff = now - start_time
-    
     last_update = user_data.get(user_id, {}).get("last_upd", 0)
-    if (now - last_update) < 5 and current != total:
+    if (now - last_update) < 4 and current != total:
         return
 
     user_data[user_id]["last_upd"] = now
-    
+    diff = now - start_time
     percentage = current * 100 / total
     speed = current / diff if diff > 0 else 0
     eta = time.strftime('%H:%M:%S', time.gmtime((total - current) / speed)) if speed > 0 else "00:00:00"
@@ -110,7 +109,6 @@ def get_config_menu(user_id):
     p_name = {"ultrafast": "Rápido ⚡", "veryfast": "Medio 🏃", "slow": "Lento 🐢"}[data['preset']]
     q_name = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}.get(data['crf'], f"{data['crf']}")
     out_name = {0: "Ninguno 🚫", 1: "Fino ✨", 2: "Medio 🖼️"}.get(data['outline'], "Medio 🖼️")
-    # Nueva variable para mostrar la posición
     pos_name = {2: "Centro-Abajo 👇", 1: "Izquierda-Abajo 👈", 3: "Derecha-Abajo 👉"}.get(data['alignment'], "Centro-Abajo 👇")
     
     text = (
@@ -120,7 +118,7 @@ def get_config_menu(user_id):
         f"🔡 **Fuente:** `{data['font']}`\n"
         f"📏 **Tamaño:** `{data['size']}px`\n"
         f"🖋️ **Contorno:** `{out_name}`\n"
-        f"📍 **Posición:** `{pos_name}`\n" # Mostrar posición actual
+        f"📍 **Posición:** `{pos_name}`\n"
         f"🚀 **Velocidad:** `{p_name}`\n"
         f"🎯 **Calidad:** `{q_name}`\n"
         "━━━━━━━━━━━━━━━━━━━━━"
@@ -137,7 +135,6 @@ def get_config_menu(user_id):
         [InlineKeyboardButton("🚫 Sin Contorno", callback_data="set_out_0"),
          InlineKeyboardButton("✨ Fino", callback_data="set_out_1"),
          InlineKeyboardButton("🖼️ Medio", callback_data="set_out_2")],
-        # Nuevos botones de posición
         [InlineKeyboardButton("👈 Izquierda", callback_data="set_pos_1"),
          InlineKeyboardButton("👇 Centro", callback_data="set_pos_2"),
          InlineKeyboardButton("👉 Derecha", callback_data="set_pos_3")],
@@ -157,27 +154,19 @@ async def start_cmd(client, message):
 @bot.on_message(filters.command("check"))
 async def check_status(client, message):
     status_text = "📊 **VERIFICACIÓN DEL SISTEMA**\n━━━━━━━━━━━━━━━━━━━━━\n"
-    
-    # Verificar Bot Principal
     status_text += "🤖 **Bot:** `ACTIVO ✅` \n"
-    
-    # Verificar Sesión Premium
     if premium_client:
         try:
             if not premium_client.is_connected: await premium_client.start()
             me = await premium_client.get_me()
             status_text += f"🌟 **Premium:** `ACTIVO ✅` (@{me.username})\n"
-        except:
-            status_text += "🌟 **Premium:** `ERROR ❌` (Sesión inválida)\n"
-    else:
-        status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
+        except: status_text += "🌟 **Premium:** `ERROR ❌` \n"
+    else: status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
     
-    # Verificar Canal Dump
     try:
         chat = await client.get_chat(Config.DUMP_CHAT_ID)
         status_text += f"📂 **Canal Dump:** `OK ✅` ({chat.title})\n"
-    except:
-        status_text += "📂 **Canal Dump:** `ERROR ❌` (No tengo acceso)\n"
+    except: status_text += "📂 **Canal Dump:** `ERROR ❌` \n"
         
     status_text += "━━━━━━━━━━━━━━━━━━━━━"
     await message.reply(status_text)
@@ -189,9 +178,8 @@ async def handle_files(client, message):
         user_data[user_id] = {
             "video": message, "subtitle": None, "color": "&HFFFFFF", 
             "size": 24, "outline": 2, "font": "Arial",
-            "alignment": 2, # Posición por defecto (Centro-Abajo)
-            "preset": "veryfast", "crf": "24", "process": None, "cancel": False,
-            "last_upd": 0, "current_speed": "0.0"
+            "alignment": 2, "preset": "veryfast", "crf": "24", 
+            "process": None, "cancel": False, "last_upd": 0
         }
         await message.reply("✅ Video recibido. Ahora envía el archivo **.srt**")
     elif message.document and message.document.file_name and message.document.file_name.endswith(".srt"):
@@ -214,7 +202,7 @@ async def callbacks(client, query: CallbackQuery):
         elif type_set == "pre": user_data[user_id]["preset"] = val
         elif type_set == "crf": user_data[user_id]["crf"] = val
         elif type_set == "out": user_data[user_id]["outline"] = int(val)
-        elif type_set == "pos": user_data[user_id]["alignment"] = int(val) # Manejar nueva posición
+        elif type_set == "pos": user_data[user_id]["alignment"] = int(val)
         elif type_set == "siz":
             user_data[user_id]["size"] = min(100, user_data[user_id]["size"] + 2) if val == "up" else max(10, user_data[user_id]["size"] - 2)
         
@@ -224,148 +212,97 @@ async def callbacks(client, query: CallbackQuery):
         await query.answer()
 
     elif query.data == "start":
-        await query.answer("🚀 Iniciando proceso...")
-        await query.message.edit("⏳ Preparando archivos...")
+        await query.answer("🚀 Iniciando...")
         await run_engine(client, query.message, user_id)
 
-    elif query.data in ["cancel_all", "stop_ffmpeg"]:
+    elif query.data == "cancel_all":
         if user_id in user_data:
             user_data[user_id]["cancel"] = True
-            if user_data[user_id]["process"]:
-                try: user_data[user_id]["process"].terminate()
+            process = user_data[user_id].get("process")
+            if process:
+                try:
+                    process.terminate()
+                    await asyncio.sleep(1)
+                    if process.returncode is None: process.kill()
                 except: pass
-            await query.answer("🛑 Proceso detenido", show_alert=True)
+            await query.answer("🛑 PROCESO CANCELADO", show_alert=True)
             await query.message.edit("❌ **Operación cancelada.**")
+            await clean_up(user_id)
 
 # --- MOTOR DE PROCESAMIENTO ---
 async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     chat_id = status_msg.chat.id
-    dl_client = client
-    video_to_download = data["video"]
-    dump_msg = None
+    v_path, s_path, output = None, None, None
 
     try:
-        dump_msg = await data["video"].forward(Config.DUMP_CHAT_ID)
-        video_to_download = dump_msg
-    except: pass
-
-    if premium_client:
-        try:
-            if not premium_client.is_connected: await premium_client.start()
-            premium_video_msg = await premium_client.get_messages(Config.DUMP_CHAT_ID, dump_msg.id)
-            if premium_video_msg:
-                video_to_download = premium_video_msg
-                dl_client = premium_client
-        except: dl_client = client
-
-    try:
-        v_path = await dl_client.download_media(
-            video_to_download, 
-            file_name=f"downloads/v_{user_id}.mp4",
-            progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO")
-        )
-        s_path = await client.download_media(
-            data["subtitle"], file_name=f"downloads/s_{user_id}.srt"
-        )
-    except Exception as e:
-        if str(e) == "STOP_PROCESS": return
-        await status_msg.edit(f"❌ Error descarga: {e}")
-        return await clean_up(user_id)
-
-    # BARRA DE COMPRESIÓN INMEDIATA
-    await status_msg.edit(
-        "🎬 **PEGANDO SUBTÍTULOS**\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "📊 **Progreso:** `0.0%` | `|▱▱▱▱▱▱▱▱▱▱|`\n"
-        "⚡ **Velocidad:** `Cargando...` \n"
-        "⏳ **Restante:** `Calculando...`\n"
-        "━━━━━━━━━━━━━━━━━━━━━",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]])
-    )
-    
-    total_duration, _, _ = get_video_info(v_path)
-    output = f"downloads/final_{user_id}.mp4"
-    
-    # Vincular la variable 'alignment' al estilo FFmpeg
-    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=25"
-    clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
-    clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
-
-    # SOLUCIÓN DEFINITIVA AL ESTIRAMIENTO DE SUBTÍTULOS: setsar=1 ESTABILIZA EL ASPECTO
-    video_filter = f"setsar=1,scale=w='if(gt(iw,ih),-2,iw)':h='if(gt(iw,ih),ih,-2)',subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
-
-    cmd = [
-        "ffmpeg", "-i", clean_v_path, "-vf", video_filter,
-        "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"],
-        "-c:a", "copy", "-movflags", "+faststart", "-progress", "pipe:1", output, "-y"
-    ]
-    
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    user_data[user_id]["process"] = process
-
-    while True:
-        line = await process.stdout.readline()
-        if not line or data["cancel"]: break
-        text = line.decode().strip()
+        # Descargas con protección de cancelación
+        v_path = await client.download_media(data["video"], file_name=f"downloads/v_{user_id}.mp4",
+                                            progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
+        s_path = await client.download_media(data["subtitle"], file_name=f"downloads/s_{user_id}.srt")
         
-        time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
-        speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
+        if data.get("cancel"): raise Exception("STOP_PROCESS")
 
-        if speed_match: user_data[user_id]["current_speed"] = speed_match.group(1)
+        await status_msg.edit("🎬 **PEGANDO SUBTÍTULOS...**")
+        
+        total_duration, _, _ = get_video_info(v_path)
+        output = f"downloads/final_{user_id}.mp4"
+        
+        # Estilo ASS y Filtro que evita el estiramiento (setsar=1)
+        style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=25"
+        clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
+        video_filter = f"setsar=1,scale=trunc(iw/2)*2:trunc(ih/2)*2,subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
 
-        if time_match:
-            curr_sec = time_to_seconds(time_match.group(1))
-            now = time.time()
-            if (now - user_data[user_id]["last_upd"]) >= 5:
-                user_data[user_id]["last_upd"] = now
-                perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
-                raw_speed = user_data[user_id]["current_speed"]
-                f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
-                eta = time.strftime('%H:%M:%S', time.gmtime(max(0, (total_duration - curr_sec) / f_speed)))
+        cmd = [
+            "ffmpeg", "-i", v_path, "-vf", video_filter,
+            "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"],
+            "-c:a", "copy", "-movflags", "+faststart", "-progress", "pipe:1", output, "-y"
+        ]
+        
+        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        user_data[user_id]["process"] = process
 
-                bar = "▰" * int(perc / 10) + "▱" * (10 - int(percentage / 10))
-                msg = (
-                    f"🎬 **PEGANDO SUBTÍTULOS**\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|`\n"
-                    f"⚡ **Velocidad:** `{raw_speed}x` \n"
-                    f"⏳ **Restante:** `{eta}`\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━"
-                )
-                try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
-                except: pass
+        while True:
+            line = await process.stdout.readline()
+            if not line or data.get("cancel"): break
+            
+            text = line.decode().strip()
+            time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
+            if time_match:
+                curr_sec = time_to_seconds(time_match.group(1))
+                if (time.time() - user_data[user_id]["last_upd"]) > 4:
+                    user_data[user_id]["last_upd"] = time.time()
+                    perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
+                    bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
+                    try: 
+                        await status_msg.edit(f"🎬 **PROCESANDO...**\n━━━━━━━━━━━━━━━━━━━━━\n📊 `{round(perc,1)}%` | `|{bar}|`",
+                                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+                    except: pass
 
-    await process.wait()
+        await process.wait()
+        if data.get("cancel"): raise Exception("STOP_PROCESS")
 
-    if os.path.exists(output) and not data["cancel"]:
-        await status_msg.edit("📤 **Subiendo video final...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
-        up_client = bot 
-        if os.path.getsize(output) > 2000 * 1024 * 1024 and premium_client:
-            up_client = premium_client
+        await status_msg.edit("📤 **SUBIENDO VIDEO...**")
+        d, w, h = get_video_info(output)
+        await client.send_video(chat_id, video=output, caption="✅ ¡Listo!", duration=d, width=w, height=h, 
+                                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO"))
+        await status_msg.delete()
 
-        try:
-            d, width, height = get_video_info(output)
-            await up_client.send_video(
-                chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
-                duration=d, width=width, height=height, supports_streaming=True,
-                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
-            )
-            await status_msg.delete()
-        except Exception as e:
-            await status_msg.edit(f"❌ Error subida: {e}")
-
-    if dump_msg:
-        try: await dump_msg.delete()
-        except: pass
-    await clean_up(user_id, v_path, s_path, output)
+    except Exception as e:
+        if str(e) != "STOP_PROCESS":
+            await status_msg.edit(f"❌ **Error:** `{e}`")
+    finally:
+        await clean_up(user_id, v_path, s_path, output)
 
 async def clean_up(user_id, v=None, s=None, o=None):
-    for p in [v, s, o]:
+    paths = [v, s, o] if v else [f"downloads/v_{user_id}.mp4", f"downloads/s_{user_id}.srt", f"downloads/final_{user_id}.mp4"]
+    for p in paths:
         if p and os.path.exists(p):
             try: os.remove(p)
             except: pass
-    if user_id in user_data: del user_data[user_id]
+    if user_id in user_data:
+        user_data[user_id]["process"] = None
+        user_data[user_id]["cancel"] = False
 
 if __name__ == "__main__":
     bot.run()
