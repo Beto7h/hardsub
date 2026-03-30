@@ -54,7 +54,7 @@ def humanbytes(size):
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
-# --- PROGRESO ---
+# --- PROGRESO (DESCARGA/SUBIDA) ---
 async def progress_bar(current, total, status_msg, start_time, action):
     uid = status_msg.chat.id
     if user_data.get(uid, {}).get("cancel"): raise Exception("STOP_PROCESS")
@@ -67,8 +67,10 @@ async def progress_bar(current, total, status_msg, start_time, action):
     eta = time.strftime('%H:%M:%S', time.gmtime((total - current) / speed)) if speed > 0 else "00:00:00"
     bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
     msg = (f"🚀 **{action}**\n━━━━━━━━━━━━━━━━━━━━━\n"
-           f"🌀 **Progreso:** `{round(perc, 1)}%` | `|{bar}|`\n"
-           f"⚡ **Velocidad:** `{humanbytes(speed)}/s` | ⏳ **ETA:** `{eta}`\n━━━━━━━━━━━━━━━━━━━━━")
+           f"🌀 **Estado:** `{round(perc, 1)}%` | `|{bar}|`\n"
+           f"📦 **Tamaño:** `{humanbytes(current)}` de `{humanbytes(total)}` \n"
+           f"⚡ **Velocidad:** `{humanbytes(speed)}/s` \n"
+           f"⏳ **Restante:** `{eta}`\n━━━━━━━━━━━━━━━━━━━━━")
     try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
     except: pass
 
@@ -96,6 +98,19 @@ def get_config_menu(uid):
         [InlineKeyboardButton("🚀 INICIAR PROCESO", callback_data="start")]
     ])
     return text, markup
+
+@bot.on_message(filters.command("start"))
+async def start_cmd(client, message):
+    text = (
+        "👋 **¡Hola! Bienvenido al Bot de Subtitulado Profresional.**\n\n"
+        "Puedo pegar subtítulos a tus videos de forma rápida y con calidad ajustable.\n\n"
+        "📂 **¿Cómo empezar?**\n"
+        "1️⃣ Envíame el **Video** que quieras procesar.\n"
+        "2️⃣ Luego envíame el archivo **.srt** con los subtítulos.\n"
+        "3️⃣ Configura el estilo y pulsa **Iniciar Proceso**.\n\n"
+        "🌟 _Soporta archivos de más de 2GB si la sesión Premium está activa._"
+    )
+    await message.reply(text)
 
 @bot.on_message(filters.command("check_premium"))
 async def check_premium(client, message):
@@ -126,19 +141,13 @@ async def callbacks(client, query: CallbackQuery):
     if query.data.startswith("set_"):
         parts = query.data.split("_")
         type_set, val = parts[1], parts[2]
-        
         if type_set == "siz":
             user_data[uid]["size"] = user_data[uid]["size"] + 2 if val == "up" else max(12, user_data[uid]["size"] - 2)
-        elif type_set == "col": user_data[uid]["color"] = val
-        elif type_set == "fnt": user_data[uid]["font"] = val
-        elif type_set == "res": user_data[uid]["res"] = val
-        elif type_set == "pre": user_data[uid]["preset"] = val
-        elif type_set == "crf": user_data[uid]["crf"] = val
-        
+        else:
+            user_data[uid][type_set] = val
         t, m = get_config_menu(uid)
         try: await query.message.edit(t, reply_markup=m)
         except: pass
-        
     elif query.data == "start": await run_engine(client, query.message, uid)
     elif query.data == "cancel_all":
         user_data[uid]["cancel"] = True
@@ -154,7 +163,6 @@ async def run_engine(client, status_msg, uid):
     try:
         await status_msg.edit("📡 **Sincronizando con Canal...**")
         dump_msg = await data["video"].forward(DUMP_ID)
-        
         dl_client = client
         target = dump_msg
         if premium_client:
@@ -170,8 +178,6 @@ async def run_engine(client, status_msg, uid):
         out = f"downloads/f_{uid}.mp4"
         style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Alignment=2,MarginV=25,Outline=2,BorderStyle=1"
         clean_s = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
-        
-        # Filtro inteligente: scale=-2 mantiene proporción, setsar=1 evita deformación
         v_filter = f"setsar=1,subtitles='{clean_s}':force_style='{style}',format=yuv420p"
         if data['res'] != "original": v_filter = f"scale=-2:{data['res']}:flags=lanczos," + v_filter
 
@@ -190,18 +196,26 @@ async def run_engine(client, status_msg, uid):
                 if t_m and s_m:
                     curr = time_to_seconds(t_m.group(1))
                     perc = (curr / dur) * 100 if dur > 0 else 0
-                    bar = "█" * int(perc / 10) + "░" * (10 - int(perc / 10))
-                    try: await status_msg.edit(f"🎬 **COMPRIMIENDO**\n📊 `{round(perc,1)}%` |`|{bar}|`|\n⚡ Vel: `{s_m.group(1)}x`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+                    bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
+                    raw_speed = s_m.group(1)
+                    eta_ff = time.strftime('%H:%M:%S', time.gmtime(max(0, (dur - curr) / float(raw_speed)))) if float(raw_speed) > 0 else "00:00:00"
+                    
+                    msg_comp = (
+                        f"🎬 **COMPRIMIENDO VIDEO**\n━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🌀 **Estado:** `{round(perc, 1)}%` | `|{bar}|`\n"
+                        f"🕒 **Tiempo:** `{t_m.group(1)}` / `{time.strftime('%H:%M:%S', time.gmtime(dur))}`\n"
+                        f"⚡ **Velocidad:** `{raw_speed}x` \n"
+                        f"⏳ **Restante:** `{eta_ff}`\n━━━━━━━━━━━━━━━━━━━━━"
+                    )
+                    try: await status_msg.edit(msg_comp, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
                     except: pass
         await process.wait()
 
         if os.path.exists(out) and not data["cancel"]:
             up_client = client
             if os.path.getsize(out) > 2000*1024*1024 and premium_client: up_client = premium_client
-            
             d, w, h = get_video_info(out)
             cap = f"✅ **¡Listo!**\n👤 ID: `{uid}`\n📏 Res: `{data['res']}p`"
-
             await up_client.send_video(uid, out, caption=cap, duration=d, width=w, height=h, supports_streaming=True, progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO"))
             await up_client.send_video(DUMP_ID, out, caption=f"📦 **Copia Comprimida**\n👤 ID: `{uid}`", duration=d, width=w, height=h, supports_streaming=True)
             await status_msg.delete()
