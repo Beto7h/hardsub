@@ -78,10 +78,11 @@ def get_config_menu(uid):
     res_txt = "Original 📺" if d['res'] == "original" else f"{d['res']}p"
     p_txt = {"ultrafast": "Rápido ⚡", "veryfast": "Medio 🏃", "slow": "Lento 🐢"}[d['preset']]
     q_txt = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}[d['crf']]
+    col_txt = "Amarillo 🟡" if d['color'] == "&H00FFFF" else "Blanco ⚪"
     
     text = (f"🎬 **AJUSTES DE PROCESAMIENTO**\n━━━━━━━━━━━━━━━━━━━━━\n"
             f"🔡 **Fuente:** `{d['font']}` | 📏 **Tamaño:** `{d['size']}px`\n"
-            f"🎨 **Color:** `{d['color']}` | 📺 **Res:** `{res_txt}`\n"
+            f"🎨 **Color:** `{col_txt}` | 📺 **Res:** `{res_txt}`\n"
             f"🚀 **Compresión:** `{p_txt}` | 🎯 **Calidad:** `{q_txt}`\n━━━━━━━━━━━━━━━━━━━━━")
     
     markup = InlineKeyboardMarkup([
@@ -89,6 +90,7 @@ def get_config_menu(uid):
         [InlineKeyboardButton("🔡 Arial", callback_data="set_fnt_Arial"), InlineKeyboardButton("🔡 Impact", callback_data="set_fnt_Impact"), InlineKeyboardButton("🔡 Verdana", callback_data="set_fnt_Verdana")],
         [InlineKeyboardButton("➖ Tamaño", callback_data="set_siz_down"), InlineKeyboardButton("➕ Tamaño", callback_data="set_siz_up")],
         [InlineKeyboardButton("📏 480p", callback_data="set_res_480"), InlineKeyboardButton("📏 720p", callback_data="set_res_720"), InlineKeyboardButton("📏 1080p", callback_data="set_res_1080")],
+        [InlineKeyboardButton("📺 Mantener Original", callback_data="set_res_original")],
         [InlineKeyboardButton("⚡ Rápido", callback_data="set_pre_ultrafast"), InlineKeyboardButton("🐢 Lento", callback_data="set_pre_slow")],
         [InlineKeyboardButton("⭐ Calidad Alta", callback_data="set_crf_20"), InlineKeyboardButton("📉 Calidad Baja", callback_data="set_crf_28")],
         [InlineKeyboardButton("🚀 INICIAR PROCESO", callback_data="start")]
@@ -122,14 +124,21 @@ async def handle_files(client, message):
 async def callbacks(client, query: CallbackQuery):
     uid = query.from_user.id
     if query.data.startswith("set_"):
-        _, type_set, val = query.data.split("_")
+        parts = query.data.split("_")
+        type_set, val = parts[1], parts[2]
+        
         if type_set == "siz":
             user_data[uid]["size"] = user_data[uid]["size"] + 2 if val == "up" else max(12, user_data[uid]["size"] - 2)
-        else:
-            user_data[uid][type_set] = val
+        elif type_set == "col": user_data[uid]["color"] = val
+        elif type_set == "fnt": user_data[uid]["font"] = val
+        elif type_set == "res": user_data[uid]["res"] = val
+        elif type_set == "pre": user_data[uid]["preset"] = val
+        elif type_set == "crf": user_data[uid]["crf"] = val
+        
         t, m = get_config_menu(uid)
         try: await query.message.edit(t, reply_markup=m)
         except: pass
+        
     elif query.data == "start": await run_engine(client, query.message, uid)
     elif query.data == "cancel_all":
         user_data[uid]["cancel"] = True
@@ -162,6 +171,7 @@ async def run_engine(client, status_msg, uid):
         style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Alignment=2,MarginV=25,Outline=2,BorderStyle=1"
         clean_s = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
         
+        # Filtro inteligente: scale=-2 mantiene proporción, setsar=1 evita deformación
         v_filter = f"setsar=1,subtitles='{clean_s}':force_style='{style}',format=yuv420p"
         if data['res'] != "original": v_filter = f"scale=-2:{data['res']}:flags=lanczos," + v_filter
 
