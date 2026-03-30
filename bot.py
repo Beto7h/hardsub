@@ -107,7 +107,8 @@ def get_config_menu(user_id):
     data = user_data[user_id]
     c_name = "Amarillo 🟡" if data['color'] == "&H00FFFF" else "Blanco ⚪"
     p_name = {"ultrafast": "Rápido ⚡", "veryfast": "Medio 🏃", "slow": "Lento 🐢"}[data['preset']]
-    q_name = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}[data['crf']]
+    # Ajuste para que reconozca los valores CRF correctamente
+    q_name = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}.get(data['crf'], f"{data['crf']} (Manual)")
     out_name = {0: "Ninguno 🚫", 1: "Fino ✨", 2: "Medio 🖼️"}.get(data['outline'], "Medio 🖼️")
     
     text = (
@@ -169,19 +170,28 @@ async def callbacks(client, query: CallbackQuery):
     if query.data.startswith("set_"):
         parts = query.data.split("_")
         type_set, val = parts[1], parts[2]
+        
+        # Mapeo de todos los botones para que funcionen
         if type_set == "col": user_data[user_id]["color"] = val
         elif type_set == "fnt": user_data[user_id]["font"] = val
         elif type_set == "pre": user_data[user_id]["preset"] = val
         elif type_set == "crf": user_data[user_id]["crf"] = val
         elif type_set == "out": user_data[user_id]["outline"] = int(val)
         elif type_set == "siz":
-            user_data[user_id]["size"] = user_data[user_id]["size"] + 2 if val == "up" else max(12, user_data[user_id]["size"] - 2)
+            # Lógica de tamaño con límites (mínimo 10, máximo 100)
+            if val == "up":
+                user_data[user_id]["size"] = min(100, user_data[user_id]["size"] + 2)
+            else:
+                user_data[user_id]["size"] = max(10, user_data[user_id]["size"] - 2)
+        
         text, markup = get_config_menu(user_id)
         try: await query.message.edit(text, reply_markup=markup)
         except: pass
+
     elif query.data == "start":
         await query.message.edit("⏳ Preparando archivos...")
         await run_engine(client, query.message, user_id)
+
     elif query.data in ["cancel_all", "stop_ffmpeg"]:
         if user_id in user_data:
             user_data[user_id]["cancel"] = True
@@ -207,6 +217,7 @@ async def run_engine(client, status_msg, user_id):
     if premium_client:
         try:
             if not premium_client.is_connected: await premium_client.start()
+            # Asegurar que se busca el mensaje correcto en el Dump
             premium_video_msg = await premium_client.get_messages(Config.DUMP_CHAT_ID, dump_msg.id)
             if premium_video_msg:
                 video_to_download = premium_video_msg
@@ -230,13 +241,11 @@ async def run_engine(client, status_msg, user_id):
     total_duration, w, h = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
     
-    # Estilo dinámico con el nuevo parámetro Outline
     style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment=2,MarginV=25"
 
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # Filtro protector de aspecto y escalado compatible
     video_filter = f"setsar=1,scale=w='if(gt(iw,ih),-2,iw)':h='if(gt(iw,ih),ih,-2)',subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
 
     cmd = [
