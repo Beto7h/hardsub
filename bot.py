@@ -252,7 +252,16 @@ async def run_engine(client, status_msg, user_id):
 
     if data["cancel"]: return await clean_up(user_id)
 
-    await status_msg.edit("🎬 **Iniciando pegado de subtítulos...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+    # Iniciar la barra visualmente antes de ejecutar FFmpeg
+    await status_msg.edit(
+        "🎬 **PEGANDO SUBTÍTULOS**\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "📊 **Progreso:** `0.0%` | `|▱▱▱▱▱▱▱▱▱▱|`\n"
+        "⚡ **Velocidad:** `Cargando...` \n"
+        "⏳ **Restante:** `Calculando...`\n"
+        "━━━━━━━━━━━━━━━━━━━━━",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]])
+    )
     
     total_duration, _, _ = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
@@ -261,7 +270,6 @@ async def run_engine(client, status_msg, user_id):
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # FILTRO MEJORADO: Normaliza escala y SAR para evitar bordes verdes y estiramiento de texto
     video_filter = f"scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
 
     cmd = [
@@ -287,9 +295,9 @@ async def run_engine(client, status_msg, user_id):
                 user_data[user_id]["last_upd"] = now
                 perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
                 raw_speed = user_data[user_id]["current_speed"]
-                f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
+                f_speed = float(raw_speed) if raw_speed != "0.0" and raw_speed != "" else 0.01
                 eta = time.strftime('%H:%M:%S', time.gmtime(max(0, (total_duration - curr_sec) / f_speed)))
-                bar = "▰" * int(perc / 10) + "▱" * (10 - int(percentage / 10))
+                bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
                 msg = (
                     f"🎬 **PEGANDO SUBTÍTULOS**\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n"
