@@ -110,6 +110,8 @@ def get_config_menu(user_id):
     p_name = {"ultrafast": "Rápido ⚡", "veryfast": "Medio 🏃", "slow": "Lento 🐢"}[data['preset']]
     q_name = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}.get(data['crf'], f"{data['crf']}")
     out_name = {0: "Ninguno 🚫", 1: "Fino ✨", 2: "Medio 🖼️"}.get(data['outline'], "Medio 🖼️")
+    # Nueva variable para mostrar la posición
+    pos_name = {2: "Centro-Abajo 👇", 1: "Izquierda-Abajo 👈", 3: "Derecha-Abajo 👉"}.get(data['alignment'], "Centro-Abajo 👇")
     
     text = (
         "🎬 **AJUSTES DE PROCESAMIENTO**\n"
@@ -118,6 +120,7 @@ def get_config_menu(user_id):
         f"🔡 **Fuente:** `{data['font']}`\n"
         f"📏 **Tamaño:** `{data['size']}px`\n"
         f"🖋️ **Contorno:** `{out_name}`\n"
+        f"📍 **Posición:** `{pos_name}`\n" # Mostrar posición actual
         f"🚀 **Velocidad:** `{p_name}`\n"
         f"🎯 **Calidad:** `{q_name}`\n"
         "━━━━━━━━━━━━━━━━━━━━━"
@@ -134,6 +137,10 @@ def get_config_menu(user_id):
         [InlineKeyboardButton("🚫 Sin Contorno", callback_data="set_out_0"),
          InlineKeyboardButton("✨ Fino", callback_data="set_out_1"),
          InlineKeyboardButton("🖼️ Medio", callback_data="set_out_2")],
+        # Nuevos botones de posición
+        [InlineKeyboardButton("👈 Izquierda", callback_data="set_pos_1"),
+         InlineKeyboardButton("👇 Centro", callback_data="set_pos_2"),
+         InlineKeyboardButton("👉 Derecha", callback_data="set_pos_3")],
         [InlineKeyboardButton("⚡ Rápido", callback_data="set_pre_ultrafast"),
          InlineKeyboardButton("🐢 Lento", callback_data="set_pre_slow")],
         [InlineKeyboardButton("⭐ Alta", callback_data="set_crf_20"),
@@ -150,18 +157,28 @@ async def start_cmd(client, message):
 @bot.on_message(filters.command("check"))
 async def check_status(client, message):
     status_text = "📊 **VERIFICACIÓN DEL SISTEMA**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    # Verificar Bot Principal
     status_text += "🤖 **Bot:** `ACTIVO ✅` \n"
+    
+    # Verificar Sesión Premium
     if premium_client:
         try:
             if not premium_client.is_connected: await premium_client.start()
             me = await premium_client.get_me()
             status_text += f"🌟 **Premium:** `ACTIVO ✅` (@{me.username})\n"
-        except: status_text += "🌟 **Premium:** `ERROR ❌` (Sesión inválida)\n"
-    else: status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
+        except:
+            status_text += "🌟 **Premium:** `ERROR ❌` (Sesión inválida)\n"
+    else:
+        status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
+    
+    # Verificar Canal Dump
     try:
         chat = await client.get_chat(Config.DUMP_CHAT_ID)
         status_text += f"📂 **Canal Dump:** `OK ✅` ({chat.title})\n"
-    except: status_text += "📂 **Canal Dump:** `ERROR ❌` (No tengo acceso)\n"
+    except:
+        status_text += "📂 **Canal Dump:** `ERROR ❌` (No tengo acceso)\n"
+        
     status_text += "━━━━━━━━━━━━━━━━━━━━━"
     await message.reply(status_text)
 
@@ -172,6 +189,7 @@ async def handle_files(client, message):
         user_data[user_id] = {
             "video": message, "subtitle": None, "color": "&HFFFFFF", 
             "size": 24, "outline": 2, "font": "Arial",
+            "alignment": 2, # Posición por defecto (Centro-Abajo)
             "preset": "veryfast", "crf": "24", "process": None, "cancel": False,
             "last_upd": 0, "current_speed": "0.0"
         }
@@ -185,25 +203,31 @@ async def handle_files(client, message):
 @bot.on_callback_query()
 async def callbacks(client, query: CallbackQuery):
     user_id = query.from_user.id
+    
     if query.data.startswith("set_"):
         if user_id not in user_data: return await query.answer("❌ Error de datos.", show_alert=True)
         parts = query.data.split("_")
         type_set, val = parts[1], parts[2]
+        
         if type_set == "col": user_data[user_id]["color"] = val
         elif type_set == "fnt": user_data[user_id]["font"] = val
         elif type_set == "pre": user_data[user_id]["preset"] = val
         elif type_set == "crf": user_data[user_id]["crf"] = val
         elif type_set == "out": user_data[user_id]["outline"] = int(val)
+        elif type_set == "pos": user_data[user_id]["alignment"] = int(val) # Manejar nueva posición
         elif type_set == "siz":
             user_data[user_id]["size"] = min(100, user_data[user_id]["size"] + 2) if val == "up" else max(10, user_data[user_id]["size"] - 2)
+        
         text, markup = get_config_menu(user_id)
         try: await query.message.edit(text, reply_markup=markup)
         except: pass
         await query.answer()
+
     elif query.data == "start":
         await query.answer("🚀 Iniciando proceso...")
         await query.message.edit("⏳ Preparando archivos...")
         await run_engine(client, query.message, user_id)
+
     elif query.data in ["cancel_all", "stop_ffmpeg"]:
         if user_id in user_data:
             user_data[user_id]["cancel"] = True
@@ -211,8 +235,7 @@ async def callbacks(client, query: CallbackQuery):
                 try: user_data[user_id]["process"].terminate()
                 except: pass
             await query.answer("🛑 Proceso detenido", show_alert=True)
-            try: await query.message.edit("❌ **Operación cancelada.**")
-            except: pass
+            await query.message.edit("❌ **Operación cancelada.**")
 
 # --- MOTOR DE PROCESAMIENTO ---
 async def run_engine(client, status_msg, user_id):
@@ -246,11 +269,9 @@ async def run_engine(client, status_msg, user_id):
             data["subtitle"], file_name=f"downloads/s_{user_id}.srt"
         )
     except Exception as e:
-        if str(e) == "STOP_PROCESS" or data["cancel"]: return await clean_up(user_id)
+        if str(e) == "STOP_PROCESS": return
         await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
-
-    if data["cancel"]: return await clean_up(user_id)
 
     # BARRA DE COMPRESIÓN INMEDIATA
     await status_msg.edit(
@@ -266,12 +287,13 @@ async def run_engine(client, status_msg, user_id):
     total_duration, _, _ = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
     
-    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment=2,MarginV=25"
+    # Vincular la variable 'alignment' al estilo FFmpeg
+    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=25"
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # FILTRO CORREGIDO: "pad" asegura divisibilidad por 2 sin deformar ni añadir franjas si no son necesarias
-    video_filter = f"pad=ceil(iw/2)*2:ceil(ih/2)*2,subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
+    # SOLUCIÓN DEFINITIVA AL ESTIRAMIENTO DE SUBTÍTULOS: setsar=1 ESTABILIZA EL ASPECTO
+    video_filter = f"setsar=1,scale=w='if(gt(iw,ih),-2,iw)':h='if(gt(iw,ih),ih,-2)',subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
 
     cmd = [
         "ffmpeg", "-i", clean_v_path, "-vf", video_filter,
@@ -286,9 +308,12 @@ async def run_engine(client, status_msg, user_id):
         line = await process.stdout.readline()
         if not line or data["cancel"]: break
         text = line.decode().strip()
+        
         time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
         speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
+
         if speed_match: user_data[user_id]["current_speed"] = speed_match.group(1)
+
         if time_match:
             curr_sec = time_to_seconds(time_match.group(1))
             now = time.time()
@@ -296,9 +321,10 @@ async def run_engine(client, status_msg, user_id):
                 user_data[user_id]["last_upd"] = now
                 perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
                 raw_speed = user_data[user_id]["current_speed"]
-                f_speed = float(raw_speed) if raw_speed and raw_speed != "0.0" else 0.01
+                f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
                 eta = time.strftime('%H:%M:%S', time.gmtime(max(0, (total_duration - curr_sec) / f_speed)))
-                bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
+
+                bar = "▰" * int(perc / 10) + "▱" * (10 - int(percentage / 10))
                 msg = (
                     f"🎬 **PEGANDO SUBTÍTULOS**\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -310,17 +336,14 @@ async def run_engine(client, status_msg, user_id):
                 try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
                 except: pass
 
-    if data["cancel"]:
-        try: process.terminate()
-        except: pass
-        return await clean_up(user_id, v_path, s_path, output)
-
     await process.wait()
 
     if os.path.exists(output) and not data["cancel"]:
         await status_msg.edit("📤 **Subiendo video final...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
         up_client = bot 
-        if os.path.getsize(output) > 2000 * 1024 * 1024 and premium_client: up_client = premium_client
+        if os.path.getsize(output) > 2000 * 1024 * 1024 and premium_client:
+            up_client = premium_client
+
         try:
             d, width, height = get_video_info(output)
             await up_client.send_video(
@@ -330,7 +353,7 @@ async def run_engine(client, status_msg, user_id):
             )
             await status_msg.delete()
         except Exception as e:
-            if not data["cancel"]: await status_msg.edit(f"❌ Error subida: {e}")
+            await status_msg.edit(f"❌ Error subida: {e}")
 
     if dump_msg:
         try: await dump_msg.delete()
