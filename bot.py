@@ -3,6 +3,7 @@ import asyncio
 import time
 import re
 import shutil
+import traceback
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from hachoir.metadata import extractMetadata
@@ -78,13 +79,11 @@ async def progress_bar(current, total, status_msg, start_time, action):
     
     now = time.time()
     diff = now - start_time
-    
     last_update = user_data.get(user_id, {}).get("last_upd", 0)
     if (now - last_update) < 5 and current != total:
         return
 
     user_data[user_id]["last_upd"] = now
-    
     percentage = current * 100 / total
     speed = current / diff if diff > 0 else 0
     eta = time.strftime('%H:%M:%S', time.gmtime((total - current) / speed)) if speed > 0 else "00:00:00"
@@ -99,8 +98,7 @@ async def progress_bar(current, total, status_msg, start_time, action):
         f"⏳ **Restante:** `{eta}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
-    try: 
-        await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+    try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
     except: pass
 
 # --- MENÚ DE CONFIGURACIÓN ---
@@ -265,25 +263,28 @@ async def run_engine(client, status_msg, user_id):
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # MEJORA DEFINITIVA: scale=iw*sar:ih y setsar=1 normalizan la imagen panorámica
-    # para que los subtítulos se dibujen sobre píxeles reales y no se estiren.
-    video_filter = f"scale=iw*sar:ih,setsar=1,subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
+    # SOLUCIÓN DEFINITIVA: Escalado a par + SAR normalizado para panorámicos
+    video_filter = (
+        f"scale='iw*sar':'ih',setsar=1,"
+        f"scale=trunc(iw/2)*2:trunc(ih/2)*2,"
+        f"subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
+    )
 
     cmd = ["ffmpeg", "-i", clean_v_path, "-vf", video_filter, "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"], "-c:a", "copy", "-movflags", "+faststart", "-progress", "pipe:1", output, "-y"]
     
     process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     user_data[user_id]["process"] = process
 
+    ffmpeg_log = ""
     while True:
         line = await process.stdout.readline()
         if not line or data["cancel"]: break
         text = line.decode().strip()
+        ffmpeg_log += text + "\n"
+        
         time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
         speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
-        
-        if speed_match: 
-            user_data[user_id]["current_speed"] = speed_match.group(1)
-            
+        if speed_match: user_data[user_id]["current_speed"] = speed_match.group(1)
         if time_match:
             curr_sec = time_to_seconds(time_match.group(1))
             now = time.time()
@@ -291,33 +292,22 @@ async def run_engine(client, status_msg, user_id):
                 user_data[user_id]["last_upd"] = now
                 perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
                 raw_speed = user_data[user_id]["current_speed"]
-                
-                # CÁLCULO DEL ETA REINTEGRADO
                 try:
                     f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
                     eta_sec = (total_duration - curr_sec) / f_speed
                     eta = time.strftime('%H:%M:%S', time.gmtime(max(0, eta_sec)))
-                except:
-                    eta = "00:00:00"
-
+                except: eta = "00:00:00"
                 bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
-                msg = (
-                    f"🎬 **PEGANDO SUBTÍTULOS**\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|` \n"
-                    f"⚡ **Velocidad:** `{raw_speed}x` \n"
-                    f"⏳ **Restante:** `{eta}`\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━"
-                )
-                try: 
-                    await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+                try: await status_msg.edit(f"🎬 **PEGANDO SUBTÍTULOS**\n━━━━━━━━━━━━━━━━━━━━━\n📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|` \n⚡ **Velocidad:** `{raw_speed}x` \n⏳ **Restante:** `{eta}`",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
                 except: pass
 
     await process.wait()
     if data["cancel"]: return await clean_up(user_id, v_path, s_path, output)
 
-    if os.path.exists(output):
-        await status_msg.edit("📤 **Subiendo video final...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+    # Verificación de salida para evitar error de 0B
+    if os.path.exists(output) and os.path.getsize(output) > 0:
+        await status_msg.edit("📤 **Subiendo video final...**")
         try:
             d, width, height = get_video_info(output)
             await client.send_video(chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
@@ -325,6 +315,9 @@ async def run_engine(client, status_msg, user_id):
                 progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO"))
             await status_msg.delete()
         except Exception as e: await status_msg.edit(f"❌ Error subida: {e}")
+    else:
+        error_msg = f"❌ **Error en procesamiento:** FFmpeg no generó el video.\n\n`{ffmpeg_log[-500:]}`"
+        await status_msg.edit(error_msg)
 
     if dump_msg:
         try: await dump_msg.delete()
