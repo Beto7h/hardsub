@@ -102,7 +102,7 @@ def get_config_menu(uid):
 @bot.on_message(filters.command("start"))
 async def start_cmd(client, message):
     text = (
-        "👋 **¡Hola! Bienvenido al Bot de Subtitulado Profresional.**\n\n"
+        "👋 **¡Hola! Bienvenido al Bot de Subtitulado Profesional.**\n\n"
         "Puedo pegar subtítulos a tus videos de forma rápida y con calidad ajustable.\n\n"
         "📂 **¿Cómo empezar?**\n"
         "1️⃣ Envíame el **Video** que quieras procesar.\n"
@@ -174,12 +174,16 @@ async def run_engine(client, status_msg, uid):
         s_path = await client.download_media(data["subtitle"], file_name=f"downloads/s_{uid}.srt")
 
         await status_msg.edit("🎬 **Iniciando Compresión...**")
-        dur, _, _ = get_video_info(v_path)
+        dur, width, height = get_video_info(v_path)
         out = f"downloads/f_{uid}.mp4"
         style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Alignment=2,MarginV=25,Outline=2,BorderStyle=1"
         clean_s = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
-        v_filter = f"setsar=1,subtitles='{clean_s}':force_style='{style}',format=yuv420p"
-        if data['res'] != "original": v_filter = f"scale=-2:{data['res']}:flags=lanczos," + v_filter
+        
+        # --- FILTRO CORREGIDO PARA ASPECTO ---
+        if data['res'] == "original":
+            v_filter = f"scale='trunc(iw/2)*2':'trunc(ih/2)*2',subtitles='{clean_s}':force_style='{style}',format=yuv420p"
+        else:
+            v_filter = f"scale=-2:{data['res']}:flags=lanczos,subtitles='{clean_s}':force_style='{style}',format=yuv420p"
 
         cmd = ["ffmpeg", "-y", "-i", v_path, "-vf", v_filter, "-c:v", "libx264", "-crf", data["crf"], "-preset", data["preset"], "-c:a", "copy", "-movflags", "+faststart", "-progress", "pipe:1", out]
         
