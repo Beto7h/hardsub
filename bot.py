@@ -261,7 +261,8 @@ async def run_engine(client, status_msg, user_id):
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    video_filter = f"setsar=1,scale=w='if(gt(iw,ih),-2,iw)':h='if(gt(iw,ih),ih,-2)',subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
+    # FILTRO MEJORADO: Normaliza escala y SAR para evitar bordes verdes y estiramiento de texto
+    video_filter = f"scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
 
     cmd = [
         "ffmpeg", "-i", clean_v_path, "-vf", video_filter,
@@ -288,7 +289,7 @@ async def run_engine(client, status_msg, user_id):
                 raw_speed = user_data[user_id]["current_speed"]
                 f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
                 eta = time.strftime('%H:%M:%S', time.gmtime(max(0, (total_duration - curr_sec) / f_speed)))
-                bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
+                bar = "▰" * int(perc / 10) + "▱" * (10 - int(percentage / 10))
                 msg = (
                     f"🎬 **PEGANDO SUBTÍTULOS**\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n"
