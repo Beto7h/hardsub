@@ -99,7 +99,8 @@ async def progress_bar(current, total, status_msg, start_time, action):
         f"⏳ **Restante:** `{eta}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
-    try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+    try: 
+        await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
     except: pass
 
 # --- MENÚ DE CONFIGURACIÓN ---
@@ -107,8 +108,7 @@ def get_config_menu(user_id):
     data = user_data[user_id]
     c_name = "Amarillo 🟡" if data['color'] == "&H00FFFF" else "Blanco ⚪"
     p_name = {"ultrafast": "Rápido ⚡", "veryfast": "Medio 🏃", "slow": "Lento 🐢"}[data['preset']]
-    # Ajuste para que reconozca los valores CRF correctamente
-    q_name = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}.get(data['crf'], f"{data['crf']} (Manual)")
+    q_name = {"20": "Alta ⭐", "24": "Buena ✅", "28": "Baja 📉"}.get(data['crf'], f"{data['crf']}")
     out_name = {0: "Ninguno 🚫", 1: "Fino ✨", 2: "Medio 🖼️"}.get(data['outline'], "Medio 🖼️")
     
     text = (
@@ -136,16 +136,44 @@ def get_config_menu(user_id):
          InlineKeyboardButton("🖼️ Medio", callback_data="set_out_2")],
         [InlineKeyboardButton("⚡ Rápido", callback_data="set_pre_ultrafast"),
          InlineKeyboardButton("🐢 Lento", callback_data="set_pre_slow")],
-        [InlineKeyboardButton("⭐ Calidad Alta", callback_data="set_crf_20"),
-         InlineKeyboardButton("✅ Calidad Buena", callback_data="set_crf_24")],
+        [InlineKeyboardButton("⭐ Alta", callback_data="set_crf_20"),
+         InlineKeyboardButton("✅ Buena", callback_data="set_crf_24")],
         [InlineKeyboardButton("🚀 INICIAR PROCESO", callback_data="start")]
     ])
     return text, markup
 
-# --- COMANDOS Y MANEJADORES ---
+# --- COMANDOS ---
 @bot.on_message(filters.command("start"))
 async def start_cmd(client, message):
-    await message.reply("👋 ¡Hola! Envíame un **video** para comenzar el subtitulado.")
+    await message.reply("👋 ¡Hola! Envíame un **video** para comenzar.")
+
+@bot.on_message(filters.command("check"))
+async def check_status(client, message):
+    status_text = "📊 **VERIFICACIÓN DEL SISTEMA**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    # Verificar Bot Principal
+    status_text += "🤖 **Bot:** `ACTIVO ✅` \n"
+    
+    # Verificar Sesión Premium
+    if premium_client:
+        try:
+            if not premium_client.is_connected: await premium_client.start()
+            me = await premium_client.get_me()
+            status_text += f"🌟 **Premium:** `ACTIVO ✅` (@{me.username})\n"
+        except:
+            status_text += "🌟 **Premium:** `ERROR ❌` (Sesión inválida)\n"
+    else:
+        status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
+    
+    # Verificar Canal Dump
+    try:
+        chat = await client.get_chat(Config.DUMP_CHAT_ID)
+        status_text += f"📂 **Canal Dump:** `OK ✅` ({chat.title})\n"
+    except:
+        status_text += "📂 **Canal Dump:** `ERROR ❌` (No tengo acceso)\n"
+        
+    status_text += "━━━━━━━━━━━━━━━━━━━━━"
+    await message.reply(status_text)
 
 @bot.on_message(filters.video | filters.document)
 async def handle_files(client, message):
@@ -167,28 +195,27 @@ async def handle_files(client, message):
 @bot.on_callback_query()
 async def callbacks(client, query: CallbackQuery):
     user_id = query.from_user.id
+    
     if query.data.startswith("set_"):
+        if user_id not in user_data: return await query.answer("❌ Error de datos.", show_alert=True)
         parts = query.data.split("_")
         type_set, val = parts[1], parts[2]
         
-        # Mapeo de todos los botones para que funcionen
         if type_set == "col": user_data[user_id]["color"] = val
         elif type_set == "fnt": user_data[user_id]["font"] = val
         elif type_set == "pre": user_data[user_id]["preset"] = val
         elif type_set == "crf": user_data[user_id]["crf"] = val
         elif type_set == "out": user_data[user_id]["outline"] = int(val)
         elif type_set == "siz":
-            # Lógica de tamaño con límites (mínimo 10, máximo 100)
-            if val == "up":
-                user_data[user_id]["size"] = min(100, user_data[user_id]["size"] + 2)
-            else:
-                user_data[user_id]["size"] = max(10, user_data[user_id]["size"] - 2)
+            user_data[user_id]["size"] = min(100, user_data[user_id]["size"] + 2) if val == "up" else max(10, user_data[user_id]["size"] - 2)
         
         text, markup = get_config_menu(user_id)
         try: await query.message.edit(text, reply_markup=markup)
         except: pass
+        await query.answer()
 
     elif query.data == "start":
+        await query.answer("🚀 Iniciando proceso...")
         await query.message.edit("⏳ Preparando archivos...")
         await run_engine(client, query.message, user_id)
 
@@ -198,7 +225,8 @@ async def callbacks(client, query: CallbackQuery):
             if user_data[user_id]["process"]:
                 try: user_data[user_id]["process"].terminate()
                 except: pass
-            await query.message.edit("❌ **Operación cancelada por el usuario.**")
+            await query.answer("🛑 Proceso detenido", show_alert=True)
+            await query.message.edit("❌ **Operación cancelada.**")
 
 # --- MOTOR DE PROCESAMIENTO ---
 async def run_engine(client, status_msg, user_id):
@@ -209,7 +237,6 @@ async def run_engine(client, status_msg, user_id):
     dump_msg = None
 
     try:
-        await status_msg.edit("📡 **Sincronizando con Canal Dump...**")
         dump_msg = await data["video"].forward(Config.DUMP_CHAT_ID)
         video_to_download = dump_msg
     except: pass
@@ -217,7 +244,6 @@ async def run_engine(client, status_msg, user_id):
     if premium_client:
         try:
             if not premium_client.is_connected: await premium_client.start()
-            # Asegurar que se busca el mensaje correcto en el Dump
             premium_video_msg = await premium_client.get_messages(Config.DUMP_CHAT_ID, dump_msg.id)
             if premium_video_msg:
                 video_to_download = premium_video_msg
@@ -234,15 +260,15 @@ async def run_engine(client, status_msg, user_id):
             data["subtitle"], file_name=f"downloads/s_{user_id}.srt"
         )
     except Exception as e:
+        if str(e) == "STOP_PROCESS": return
         await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
 
-    await status_msg.edit("🎬 **Iniciando Compresión...**")
-    total_duration, w, h = get_video_info(v_path)
+    await status_msg.edit("🎬 **Iniciando pegado de subtítulos...**")
+    total_duration, _, _ = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
     
     style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment=2,MarginV=25"
-
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
@@ -300,13 +326,14 @@ async def run_engine(client, status_msg, user_id):
         try:
             d, width, height = get_video_info(output)
             await up_client.send_video(
-                chat_id=chat_id, video=output, caption="✅ **¡Proceso completado con éxito!**",
+                chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
                 duration=d, width=width, height=height, supports_streaming=True,
                 progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
             )
             await status_msg.delete()
         except Exception as e:
-            await status_msg.edit(f"❌ Error subida: {e}")
+            if str(e) != "STOP_PROCESS":
+                await status_msg.edit(f"❌ Error subida: {e}")
 
     if dump_msg:
         try: await dump_msg.delete()
