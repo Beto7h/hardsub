@@ -150,28 +150,18 @@ async def start_cmd(client, message):
 @bot.on_message(filters.command("check"))
 async def check_status(client, message):
     status_text = "📊 **VERIFICACIÓN DEL SISTEMA**\n━━━━━━━━━━━━━━━━━━━━━\n"
-    
-    # Verificar Bot Principal
     status_text += "🤖 **Bot:** `ACTIVO ✅` \n"
-    
-    # Verificar Sesión Premium
     if premium_client:
         try:
             if not premium_client.is_connected: await premium_client.start()
             me = await premium_client.get_me()
             status_text += f"🌟 **Premium:** `ACTIVO ✅` (@{me.username})\n"
-        except:
-            status_text += "🌟 **Premium:** `ERROR ❌` (Sesión inválida)\n"
-    else:
-        status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
-    
-    # Verificar Canal Dump
+        except: status_text += "🌟 **Premium:** `ERROR ❌` (Sesión inválida)\n"
+    else: status_text += "🌟 **Premium:** `NO CONFIGURADO ⚠️` \n"
     try:
         chat = await client.get_chat(Config.DUMP_CHAT_ID)
         status_text += f"📂 **Canal Dump:** `OK ✅` ({chat.title})\n"
-    except:
-        status_text += "📂 **Canal Dump:** `ERROR ❌` (No tengo acceso)\n"
-        
+    except: status_text += "📂 **Canal Dump:** `ERROR ❌` (No tengo acceso)\n"
     status_text += "━━━━━━━━━━━━━━━━━━━━━"
     await message.reply(status_text)
 
@@ -195,12 +185,10 @@ async def handle_files(client, message):
 @bot.on_callback_query()
 async def callbacks(client, query: CallbackQuery):
     user_id = query.from_user.id
-    
     if query.data.startswith("set_"):
         if user_id not in user_data: return await query.answer("❌ Error de datos.", show_alert=True)
         parts = query.data.split("_")
         type_set, val = parts[1], parts[2]
-        
         if type_set == "col": user_data[user_id]["color"] = val
         elif type_set == "fnt": user_data[user_id]["font"] = val
         elif type_set == "pre": user_data[user_id]["preset"] = val
@@ -208,17 +196,14 @@ async def callbacks(client, query: CallbackQuery):
         elif type_set == "out": user_data[user_id]["outline"] = int(val)
         elif type_set == "siz":
             user_data[user_id]["size"] = min(100, user_data[user_id]["size"] + 2) if val == "up" else max(10, user_data[user_id]["size"] - 2)
-        
         text, markup = get_config_menu(user_id)
         try: await query.message.edit(text, reply_markup=markup)
         except: pass
         await query.answer()
-
     elif query.data == "start":
         await query.answer("🚀 Iniciando proceso...")
         await query.message.edit("⏳ Preparando archivos...")
         await run_engine(client, query.message, user_id)
-
     elif query.data in ["cancel_all", "stop_ffmpeg"]:
         if user_id in user_data:
             user_data[user_id]["cancel"] = True
@@ -226,7 +211,8 @@ async def callbacks(client, query: CallbackQuery):
                 try: user_data[user_id]["process"].terminate()
                 except: pass
             await query.answer("🛑 Proceso detenido", show_alert=True)
-            await query.message.edit("❌ **Operación cancelada.**")
+            try: await query.message.edit("❌ **Operación cancelada.**")
+            except: pass
 
 # --- MOTOR DE PROCESAMIENTO ---
 async def run_engine(client, status_msg, user_id):
@@ -260,11 +246,14 @@ async def run_engine(client, status_msg, user_id):
             data["subtitle"], file_name=f"downloads/s_{user_id}.srt"
         )
     except Exception as e:
-        if str(e) == "STOP_PROCESS": return
+        if str(e) == "STOP_PROCESS" or data["cancel"]: return await clean_up(user_id)
         await status_msg.edit(f"❌ Error descarga: {e}")
         return await clean_up(user_id)
 
-    await status_msg.edit("🎬 **Iniciando pegado de subtítulos...**")
+    if data["cancel"]: return await clean_up(user_id)
+
+    await status_msg.edit("🎬 **Iniciando pegado de subtítulos...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+    
     total_duration, _, _ = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
     
@@ -287,12 +276,9 @@ async def run_engine(client, status_msg, user_id):
         line = await process.stdout.readline()
         if not line or data["cancel"]: break
         text = line.decode().strip()
-        
         time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
         speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
-
         if speed_match: user_data[user_id]["current_speed"] = speed_match.group(1)
-
         if time_match:
             curr_sec = time_to_seconds(time_match.group(1))
             now = time.time()
@@ -302,7 +288,6 @@ async def run_engine(client, status_msg, user_id):
                 raw_speed = user_data[user_id]["current_speed"]
                 f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
                 eta = time.strftime('%H:%M:%S', time.gmtime(max(0, (total_duration - curr_sec) / f_speed)))
-
                 bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
                 msg = (
                     f"🎬 **PEGANDO SUBTÍTULOS**\n"
@@ -315,14 +300,17 @@ async def run_engine(client, status_msg, user_id):
                 try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="stop_ffmpeg")]]))
                 except: pass
 
+    if data["cancel"]:
+        try: process.terminate()
+        except: pass
+        return await clean_up(user_id, v_path, s_path, output)
+
     await process.wait()
 
     if os.path.exists(output) and not data["cancel"]:
-        await status_msg.edit("📤 **Subiendo video final...**")
+        await status_msg.edit("📤 **Subiendo video final...**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
         up_client = bot 
-        if os.path.getsize(output) > 2000 * 1024 * 1024 and premium_client:
-            up_client = premium_client
-
+        if os.path.getsize(output) > 2000 * 1024 * 1024 and premium_client: up_client = premium_client
         try:
             d, width, height = get_video_info(output)
             await up_client.send_video(
@@ -332,8 +320,7 @@ async def run_engine(client, status_msg, user_id):
             )
             await status_msg.delete()
         except Exception as e:
-            if str(e) != "STOP_PROCESS":
-                await status_msg.edit(f"❌ Error subida: {e}")
+            if not data["cancel"]: await status_msg.edit(f"❌ Error subida: {e}")
 
     if dump_msg:
         try: await dump_msg.delete()
