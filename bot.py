@@ -129,7 +129,7 @@ async def handle_files(client, message):
     if message.video or (message.document and message.document.mime_type and "video" in message.document.mime_type):
         user_data[uid] = {"video": message, "subtitle": None, "color": "&HFFFFFF", "res": "720", "size": 24, "font": "Arial", "preset": "veryfast", "crf": "24", "cancel": False, "last_upd": 0}
         await message.reply("✅ Video recibido. Envía el **.srt**")
-    elif message.document and message.document.file_name.endswith(".srt"):
+    elif message.document and message.document.file_name and message.document.file_name.endswith(".srt"):
         if uid not in user_data: return
         user_data[uid]["subtitle"] = message
         t, m = get_config_menu(uid)
@@ -141,14 +141,27 @@ async def callbacks(client, query: CallbackQuery):
     if query.data.startswith("set_"):
         parts = query.data.split("_")
         type_set, val = parts[1], parts[2]
+        
+        # Lógica para todos los botones del menú
         if type_set == "siz":
             user_data[uid]["size"] = user_data[uid]["size"] + 2 if val == "up" else max(12, user_data[uid]["size"] - 2)
-        else:
-            user_data[uid][type_set] = val
+        elif type_set == "col":
+            user_data[uid]["color"] = val
+        elif type_set == "fnt":
+            user_data[uid]["font"] = val
+        elif type_set == "res":
+            user_data[uid]["res"] = val
+        elif type_set == "pre":
+            user_data[uid]["preset"] = val
+        elif type_set == "crf":
+            user_data[uid]["crf"] = val
+        
         t, m = get_config_menu(uid)
         try: await query.message.edit(t, reply_markup=m)
         except: pass
-    elif query.data == "start": await run_engine(client, query.message, uid)
+        
+    elif query.data == "start": 
+        await run_engine(client, query.message, uid)
     elif query.data == "cancel_all":
         user_data[uid]["cancel"] = True
         if user_data[uid].get("process"):
@@ -179,7 +192,6 @@ async def run_engine(client, status_msg, uid):
         style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Alignment=2,MarginV=25,Outline=2,BorderStyle=1"
         clean_s = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
         
-        # --- FILTRO CORREGIDO PARA ASPECTO ---
         if data['res'] == "original":
             v_filter = f"scale='trunc(iw/2)*2':'trunc(ih/2)*2',subtitles='{clean_s}':force_style='{style}',format=yuv420p"
         else:
