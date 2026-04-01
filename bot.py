@@ -4,6 +4,7 @@ import time
 import re
 import shutil
 import traceback
+import codecs
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from hachoir.metadata import extractMetadata
@@ -246,7 +247,16 @@ async def run_engine(client, status_msg, user_id):
     try:
         v_path = await dl_client.download_media(video_to_download, file_name=f"downloads/v_{user_id}.mp4",
             progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
-        s_path = await client.download_media(data["subtitle"], file_name=f"downloads/s_{user_id}.srt")
+        
+        # Limpieza de SRT para evitar errores de codificación (Error de Hitch)
+        raw_s_path = await client.download_media(data["subtitle"], file_name=f"downloads/raw_s_{user_id}.srt")
+        with codecs.open(raw_s_path, 'r', encoding='utf-8', errors='ignore') as f_in:
+            content = f_in.read()
+        s_path = f"downloads/s_{user_id}.srt"
+        with open(s_path, 'w', encoding='utf-8') as f_out:
+            f_out.write(content)
+        if os.path.exists(raw_s_path): os.remove(raw_s_path)
+        
     except Exception as e:
         if str(e) == "STOP_PROCESS": return
         await status_msg.edit(f"❌ Error descarga: {e}")
@@ -259,11 +269,14 @@ async def run_engine(client, status_msg, user_id):
     
     total_duration, _, _ = get_video_info(v_path)
     output = f"downloads/final_{user_id}.mp4"
-    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=25"
+    
+    # MarginV=35 y Alignment corregido para que no queden al centro
+    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=35"
+    
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # SOLUCIÓN DEFINITIVA: Escalado a par + SAR normalizado para panorámicos
+    # Ajuste de escala y SAR para evitar que los subs floten en videos panorámicos
     video_filter = (
         f"scale='iw*sar':'ih',setsar=1,"
         f"scale=trunc(iw/2)*2:trunc(ih/2)*2,"
@@ -305,7 +318,6 @@ async def run_engine(client, status_msg, user_id):
     await process.wait()
     if data["cancel"]: return await clean_up(user_id, v_path, s_path, output)
 
-    # Verificación de salida para evitar error de 0B
     if os.path.exists(output) and os.path.getsize(output) > 0:
         await status_msg.edit("📤 **Subiendo video final...**")
         try:
