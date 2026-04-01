@@ -12,7 +12,7 @@ from hachoir.parser import createParser
 from config import Config
 
 # --- CONFIGURACIÓN DE CANAL DUMP ---
-Config.DUMP_CHAT_ID = -1003878976804
+Config.DUMP_CHAT_ID = 
 
 # --- LIMPIEZA AUTOMÁTICA AL INICIAR ---
 def clear_downloads():
