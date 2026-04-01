@@ -11,6 +11,9 @@ from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
 from config import Config
 
+# --- CONFIGURACIÓN DE CANAL DUMP ---
+Config.DUMP_CHAT_ID = -1003878976804
+
 # --- LIMPIEZA AUTOMÁTICA AL INICIAR ---
 def clear_downloads():
     folder = "downloads"
@@ -172,14 +175,24 @@ async def check_status(client, message):
 @bot.on_message(filters.video | filters.document)
 async def handle_files(client, message):
     user_id = message.from_user.id
+    
+    # Capturar el nombre original del archivo
+    file_name = "video_procesado.mp4"
+    if message.video and message.video.file_name:
+        file_name = message.video.file_name
+    elif message.document and message.document.file_name:
+        file_name = message.document.file_name
+
     if message.video or (message.document and message.document.mime_type and "video" in message.document.mime_type):
         user_data[user_id] = {
-            "video": message, "subtitle": None, "color": "&HFFFFFF", 
+            "video": message, 
+            "video_name": file_name,
+            "subtitle": None, "color": "&HFFFFFF", 
             "size": 24, "outline": 2, "font": "Arial",
             "alignment": 2, "preset": "veryfast", "crf": "24", "process": None, "cancel": False,
             "last_upd": 0, "current_speed": "0.0"
         }
-        await message.reply("✅ Video recibido. Ahora envía el archivo **.srt**")
+        await message.reply(f"✅ Video recibido: `{file_name}`. Ahora envía el archivo **.srt**")
     elif message.document and message.document.file_name and message.document.file_name.endswith(".srt"):
         if user_id not in user_data: return await message.reply("❌ Envía el video primero.")
         user_data[user_id]["subtitle"] = message
@@ -248,7 +261,6 @@ async def run_engine(client, status_msg, user_id):
         v_path = await dl_client.download_media(video_to_download, file_name=f"downloads/v_{user_id}.mp4",
             progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
         
-        # Limpieza de SRT para evitar errores de codificación (Error de Hitch)
         raw_s_path = await client.download_media(data["subtitle"], file_name=f"downloads/raw_s_{user_id}.srt")
         with codecs.open(raw_s_path, 'r', encoding='utf-8', errors='ignore') as f_in:
             content = f_in.read()
@@ -268,22 +280,22 @@ async def run_engine(client, status_msg, user_id):
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
     
     total_duration, _, _ = get_video_info(v_path)
-    output = f"downloads/final_{user_id}.mp4"
+    temp_output = f"downloads/temp_{user_id}.mp4"
     
-    # MarginV=35 y Alignment corregido para que no queden al centro
-    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=35"
+    # MarginV=12 para que queden abajo (estilo VLC) independientemente del aspect ratio
+    style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=12"
     
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # Ajuste de escala y SAR para evitar que los subs floten en videos panorámicos
+    # Filtro universal: Forzamos SAR 1:1 para que el margen sea real en cualquier video
     video_filter = (
         f"scale='iw*sar':'ih',setsar=1,"
         f"scale=trunc(iw/2)*2:trunc(ih/2)*2,"
         f"subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
     )
 
-    cmd = ["ffmpeg", "-i", clean_v_path, "-vf", video_filter, "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"], "-c:a", "copy", "-movflags", "+faststart", "-progress", "pipe:1", output, "-y"]
+    cmd = ["ffmpeg", "-i", clean_v_path, "-vf", video_filter, "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"], "-c:a", "copy", "-movflags", "+faststart", "-progress", "pipe:1", temp_output, "-y"]
     
     process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     user_data[user_id]["process"] = process
@@ -310,31 +322,53 @@ async def run_engine(client, status_msg, user_id):
                     eta_sec = (total_duration - curr_sec) / f_speed
                     eta = time.strftime('%H:%M:%S', time.gmtime(max(0, eta_sec)))
                 except: eta = "00:00:00"
-                bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
+                bar = "▰" * int(perc / 10) + "▱" * (10 - int(percentage / 10))
                 try: await status_msg.edit(f"🎬 **PEGANDO SUBTÍTULOS**\n━━━━━━━━━━━━━━━━━━━━━\n📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|` \n⚡ **Velocidad:** `{raw_speed}x` \n⏳ **Restante:** `{eta}`",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
                 except: pass
 
     await process.wait()
-    if data["cancel"]: return await clean_up(user_id, v_path, s_path, output)
+    if data["cancel"]: return await clean_up(user_id, v_path, s_path, temp_output)
 
-    if os.path.exists(output) and os.path.getsize(output) > 0:
-        await status_msg.edit("📤 **Subiendo video final...**")
+    if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
+        # Renombrar al NOMBRE ORIGINAL antes de subir
+        final_output = f"downloads/{data['video_name']}"
+        if os.path.exists(final_output): os.remove(final_output)
+        os.rename(temp_output, final_output)
+        
+        file_size = os.path.getsize(final_output)
+        limit_2gb = 2 * 1024 * 1024 * 1024
+        
+        # Selección inteligente de cliente de subida
+        up_client = bot
+        mode_text = "BOT 🤖"
+        
+        if file_size > limit_2gb and premium_client:
+            up_client = premium_client
+            mode_text = "PREMIUM 🌟"
+
+        await status_msg.edit(f"📤 **Subiendo:** `{data['video_name']}`\n⚡ **Vía:** {mode_text}")
         try:
-            d, width, height = get_video_info(output)
-            await client.send_video(chat_id=chat_id, video=output, caption="✅ **¡Proceso completado!**",
+            d, width, height = get_video_info(final_output)
+            await up_client.send_video(
+                chat_id=chat_id, 
+                video=final_output, 
+                caption=f"✅ **¡Completado!**\n📦 **Tamaño:** `{humanbytes(file_size)}` \n⚡ **Vía:** `{mode_text}`",
                 duration=d, width=width, height=height, supports_streaming=True,
-                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO"))
+                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
+            )
             await status_msg.delete()
         except Exception as e: await status_msg.edit(f"❌ Error subida: {e}")
+        
+        await clean_up(user_id, v_path, s_path, final_output)
     else:
         error_msg = f"❌ **Error en procesamiento:** FFmpeg no generó el video.\n\n`{ffmpeg_log[-500:]}`"
         await status_msg.edit(error_msg)
+        await clean_up(user_id, v_path, s_path, temp_output)
 
     if dump_msg:
         try: await dump_msg.delete()
         except: pass
-    await clean_up(user_id, v_path, s_path, output)
 
 async def clean_up(user_id, v=None, s=None, o=None):
     for p in [v, s, o]:
