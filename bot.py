@@ -176,7 +176,6 @@ async def check_status(client, message):
 async def handle_files(client, message):
     user_id = message.from_user.id
     
-    # Capturar el nombre original del archivo
     file_name = "video_procesado.mp4"
     if message.video and message.video.file_name:
         file_name = message.video.file_name
@@ -282,13 +281,11 @@ async def run_engine(client, status_msg, user_id):
     total_duration, _, _ = get_video_info(v_path)
     temp_output = f"downloads/temp_{user_id}.mp4"
     
-    # MarginV=12 para que queden abajo (estilo VLC) independientemente del aspect ratio
     style = f"FontName={data['font']},PrimaryColour={data['color']},FontSize={data['size']},Outline={data['outline']},BorderStyle=1,Shadow=0,Alignment={data['alignment']},MarginV=12"
     
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # Filtro universal: Forzamos SAR 1:1 para que el margen sea real en cualquier video
     video_filter = (
         f"scale='iw*sar':'ih',setsar=1,"
         f"scale=trunc(iw/2)*2:trunc(ih/2)*2,"
@@ -322,7 +319,7 @@ async def run_engine(client, status_msg, user_id):
                     eta_sec = (total_duration - curr_sec) / f_speed
                     eta = time.strftime('%H:%M:%S', time.gmtime(max(0, eta_sec)))
                 except: eta = "00:00:00"
-                bar = "▰" * int(perc / 10) + "▱" * (10 - int(percentage / 10))
+                bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
                 try: await status_msg.edit(f"🎬 **PEGANDO SUBTÍTULOS**\n━━━━━━━━━━━━━━━━━━━━━\n📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|` \n⚡ **Velocidad:** `{raw_speed}x` \n⏳ **Restante:** `{eta}`",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
                 except: pass
@@ -331,7 +328,6 @@ async def run_engine(client, status_msg, user_id):
     if data["cancel"]: return await clean_up(user_id, v_path, s_path, temp_output)
 
     if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
-        # Renombrar al NOMBRE ORIGINAL antes de subir
         final_output = f"downloads/{data['video_name']}"
         if os.path.exists(final_output): os.remove(final_output)
         os.rename(temp_output, final_output)
@@ -339,10 +335,8 @@ async def run_engine(client, status_msg, user_id):
         file_size = os.path.getsize(final_output)
         limit_2gb = 2 * 1024 * 1024 * 1024
         
-        # Selección inteligente de cliente de subida
         up_client = bot
         mode_text = "BOT 🤖"
-        
         if file_size > limit_2gb and premium_client:
             up_client = premium_client
             mode_text = "PREMIUM 🌟"
