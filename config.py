@@ -6,32 +6,23 @@ load_dotenv()
 
 class Config:
     # --- CREDENCIALES DE TELEGRAM ---
-    # Se obtienen de https://my.telegram.org
+    # En GitHub dejamos valores genéricos (0 o "") 
+    # El bot leerá los reales desde las Variables de Entorno del servidor
     API_ID = int(os.environ.get("API_ID", 0))
     API_HASH = os.environ.get("API_HASH", "")
-    
-    # El token que te da @BotFather
     BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-    # --- CANAL DUMP (LOGS / RESPALDO) ---
-    # IMPORTANTE: En tu código usas 'DUMP_CHAT_ID'. 
-    # Asegúrate de que sea el ID numérico (ej: -100123456789)
+    # --- CANAL DUMP ---
     DUMP_CHAT_ID = int(os.environ.get("DUMP_CHAT_ID", 0))
 
-    # --- SESIÓN PREMIUM (OPCIONAL) ---
-    # Si dejas esto vacío, el bot usará la cuenta normal del Bot.
-    # Si pones el String Session, usará los beneficios Premium para descargar/subir.
+    # --- SESIÓN PREMIUM ---
     STRING_SESSION = os.environ.get("STRING_SESSION", "")
-    
-    # --- CONFIGURACIÓN DE ALMACENAMIENTO ---
+
+    # --- CONFIGURACIONES POR DEFECTO ---
     DOWNLOAD_LOCATION = os.environ.get("DOWNLOAD_LOCATION", "./downloads")
-    
-    # --- CONFIGURACIÓN DE FFmpeg / HARSUB (Valores Iniciales) ---
-    DEFAULT_COLOR = "&HFFFFFF"      # Blanco (BGR format)
-    DEFAULT_FONT_NAME = "Arial"     # Fuente por defecto
-    DEFAULT_FONT_SIZE = 24          # Tamaño en px
-    DEFAULT_OUTLINE = 2             # 2 = Medio, 1 = Fino, 0 = Sin contorno
-    
-    # --- AJUSTES DE CODIFICACIÓN ---
-    DEFAULT_PRESET = "veryfast"     # Velocidad de proceso
-    DEFAULT_CRF = "24"              # Calidad (18 alta, 24 buena, 28 baja)
+    DEFAULT_COLOR = os.environ.get("DEFAULT_COLOR", "&HFFFFFF")
+    DEFAULT_FONT_NAME = os.environ.get("DEFAULT_FONT_NAME", "Arial")
+    DEFAULT_FONT_SIZE = int(os.environ.get("DEFAULT_FONT_SIZE", 24))
+    DEFAULT_OUTLINE = int(os.environ.get("DEFAULT_OUTLINE", 2))
+    DEFAULT_PRESET = os.environ.get("DEFAULT_PRESET", "veryfast")
+    DEFAULT_CRF = os.environ.get("DEFAULT_CRF", "24")
