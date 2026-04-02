@@ -11,9 +11,6 @@ from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
 from config import Config
 
-# --- CONFIGURACIÓN DE CANAL DUMP ---
-Config.DUMP_CHAT_ID = 
-
 # --- LIMPIEZA AUTOMÁTICA AL INICIAR ---
 def clear_downloads():
     folder = "downloads"
@@ -32,6 +29,7 @@ def clear_downloads():
 clear_downloads()
 
 # --- INICIALIZACIÓN ---
+# Usa los valores importados desde config.py
 bot = Client(
     "HarsubBot", 
     api_id=Config.API_ID, 
