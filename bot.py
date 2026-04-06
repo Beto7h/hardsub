@@ -28,13 +28,15 @@ def clear_downloads():
 
 clear_downloads()
 
-# --- INICIALIZACIÓN ---
+# --- INICIALIZACIÓN DE ALTO RENDIMIENTO ---
+# Aumentamos workers a 200 y habilitamos múltiples transmisiones concurrentes
 bot = Client(
     "HarsubBot", 
     api_id=Config.API_ID, 
     api_hash=Config.API_HASH, 
     bot_token=Config.BOT_TOKEN,
-    workers=50
+    workers=200,
+    max_concurrent_transmissions=40  # Permite usar más ancho de banda en paralelo
 )
 
 premium_client = None
@@ -44,7 +46,9 @@ if hasattr(Config, "STRING_SESSION") and Config.STRING_SESSION:
         api_id=Config.API_ID, 
         api_hash=Config.API_HASH, 
         session_string=Config.STRING_SESSION,
-        sleep_threshold=60 
+        sleep_threshold=120,
+        workers=200,
+        max_concurrent_transmissions=40
     )
 
 user_data = {}
@@ -81,7 +85,9 @@ async def progress_bar(current, total, status_msg, start_time, action):
     now = time.time()
     diff = now - start_time
     last_update = user_data.get(user_id, {}).get("last_upd", 0)
-    if (now - last_update) < 5 and current != total:
+    
+    # Actualización cada 4 segundos para evitar spam pero mantener fluidez
+    if (now - last_update) < 4 and current != total:
         return
 
     user_data[user_id]["last_upd"] = now
@@ -94,7 +100,7 @@ async def progress_bar(current, total, status_msg, start_time, action):
         f"🚀 **{action}**\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🌀 **Estado:** `{round(percentage, 1)}%` | `|{bar}|`\n"
-        f"📦 **Tamaño:** `{humanbytes(current)}` de `{humanbytes(total)}` \n"
+        f"📦 **Tamaño:** `{humanbytes(current)}` / `{humanbytes(total)}` \n"
         f"⚡ **Velocidad:** `{humanbytes(speed)}/s` \n"
         f"⏳ **Restante:** `{eta}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
@@ -218,30 +224,29 @@ async def callbacks(client, query: CallbackQuery):
 async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     chat_id = status_msg.chat.id
-    dl_client = client
+    
+    # Intentar reenviar al canal DUMP para acelerar la descarga vía servidores de Telegram
     video_to_download = data["video"]
-    dump_msg = None
-
+    dl_client = client
+    
     try:
         dump_msg = await data["video"].forward(Config.DUMP_CHAT_ID)
-        video_to_download = dump_msg
-    except: pass
-
-    if premium_client:
-        try:
+        if premium_client:
             if not premium_client.is_connected: await premium_client.start()
             premium_video_msg = await premium_client.get_messages(Config.DUMP_CHAT_ID, dump_msg.id)
             if premium_video_msg:
                 video_to_download = premium_video_msg
                 dl_client = premium_client
-        except: dl_client = client
+    except: pass
 
     try:
-        v_path = await dl_client.download_media(video_to_download, file_name=f"downloads/v_{user_id}.mp4",
-            progress=progress_bar, progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO"))
-        
-        s_path = await client.download_media(data["subtitle"], file_name=f"downloads/s_{user_id}.srt")
-        
+        v_path = await dl_client.download_media(
+            video_to_download, 
+            file_name=f"downloads/v_{user_id}.mp4",
+            progress=progress_bar, 
+            progress_args=(status_msg, time.time(), "DESCARGANDO VIDEO")
+        )
+        s_path = await bot.download_media(data["subtitle"], file_name=f"downloads/s_{user_id}.srt")
     except Exception as e:
         if str(e) == "STOP_PROCESS": return
         await status_msg.edit(f"❌ Error descarga: {e}")
@@ -256,13 +261,14 @@ async def run_engine(client, status_msg, user_id):
 
     base_filter = f"scale='iw*sar':'ih',setsar=1,scale=trunc(iw/2)*2:trunc(ih/2)*2"
     
+    # COMANDO FFmpeg OPTIMIZADO: '-threads 0' usa todo el CPU disponible
     if data["mode"] == "smart":
         target_size_bits = 1900 * 1024 * 1024 * 8 
         calculated_bitrate = int((target_size_bits / total_duration) * 0.9)
         v_bitrate = min(calculated_bitrate, 5000000)
         video_filter = f"{base_filter},scale=1280:-2,subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
         cmd = [
-            "ffmpeg", "-i", clean_v_path, "-vf", video_filter, 
+            "ffmpeg", "-threads", "0", "-i", clean_v_path, "-vf", video_filter, 
             "-c:v", "libx264", "-b:v", f"{v_bitrate}", "-maxrate", f"{v_bitrate}", "-bufsize", f"{v_bitrate*2}",
             "-preset", "ultrafast", "-c:a", "copy", "-movflags", "+faststart", 
             "-progress", "pipe:1", temp_output, "-y"
@@ -270,7 +276,7 @@ async def run_engine(client, status_msg, user_id):
     else:
         video_filter = f"{base_filter},subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
         cmd = [
-            "ffmpeg", "-i", clean_v_path, "-vf", video_filter, 
+            "ffmpeg", "-threads", "0", "-i", clean_v_path, "-vf", video_filter, 
             "-c:v", "libx264", "-preset", data["preset"], "-crf", data["crf"], 
             "-c:a", "copy", "-movflags", "+faststart", 
             "-progress", "pipe:1", temp_output, "-y"
@@ -284,20 +290,16 @@ async def run_engine(client, status_msg, user_id):
         if not line or data["cancel"]: break
         text = line.decode().strip()
         
-        # Extraer tiempo y velocidad de FFmpeg
         time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
         speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
         
         if speed_match: data["current_speed"] = speed_match.group(1)
-        
         if time_match:
             curr_sec = time_to_seconds(time_match.group(1))
             now = time.time()
             if (now - data["last_upd"]) >= 5:
                 data["last_upd"] = now
                 perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
-                
-                # Calcular ETA para el procesado
                 raw_speed = data["current_speed"]
                 try:
                     f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
@@ -306,7 +308,6 @@ async def run_engine(client, status_msg, user_id):
                 except: eta = "00:00:00"
                 
                 bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
-                
                 status_text = (
                     f"🎬 **PEGANDO SUBTÍTULOS ({data['mode'].upper()})**\n"
                     f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -315,16 +316,12 @@ async def run_engine(client, status_msg, user_id):
                     f"⏳ **Restante:** `{eta}`\n"
                     f"━━━━━━━━━━━━━━━━━━━━━"
                 )
-                
-                try: 
-                    await status_msg.edit(status_text, 
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+                try: await status_msg.edit(status_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
                 except: pass
 
     await process.wait()
     
-    if data["cancel"]: 
-        return await clean_up(user_id, v_path, s_path, temp_output)
+    if data["cancel"]: return await clean_up(user_id, v_path, s_path, temp_output)
 
     if os.path.exists(temp_output):
         final_output = f"downloads/{data['video_name']}"
@@ -333,15 +330,12 @@ async def run_engine(client, status_msg, user_id):
         file_size = os.path.getsize(final_output)
         
         up_client = premium_client if (file_size > 2000*1024*1024 and premium_client) else bot
-        mode_label = "PREMIUM 🌟" if up_client == premium_client else "BOT 🤖"
-        
-        await status_msg.edit(f"📤 **Subiendo:** `{data['video_name']}`\n⚡ **Vía:** {mode_label}")
         
         try:
             d, width, height = get_video_info(final_output)
             await up_client.send_video(
                 chat_id=chat_id, video=final_output, 
-                caption=f"✅ **¡Completado!**\n📦 **Modo:** `{data['mode'].upper()}`\n⚖️ **Peso:** `{humanbytes(file_size)}`",
+                caption=f"✅ **¡Completado!**\n⚖️ **Peso:** `{humanbytes(file_size)}`",
                 duration=d, width=width, height=height, supports_streaming=True,
                 progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
             )
