@@ -254,17 +254,12 @@ async def run_engine(client, status_msg, user_id):
     clean_v_path = os.path.abspath(v_path).replace("\\", "/").replace(":", "\\:")
     clean_s_path = os.path.abspath(s_path).replace("\\", "/").replace(":", "\\:")
 
-    # --- LÓGICA DE FILTROS ---
-    # Mantenemos tu lógica de scale='iw*sar':'ih' para originalidad
     base_filter = f"scale='iw*sar':'ih',setsar=1,scale=trunc(iw/2)*2:trunc(ih/2)*2"
     
     if data["mode"] == "smart":
-        # MODO INTELIGENTE: Calcula bitrate para < 2GB y escala a 720p para velocidad
         target_size_bits = 1900 * 1024 * 1024 * 8 
         calculated_bitrate = int((target_size_bits / total_duration) * 0.9)
-        v_bitrate = min(calculated_bitrate, 5000000) # Máximo 5Mbps
-        
-        # Filtro: Corrección de aspecto + Reducción a 720p
+        v_bitrate = min(calculated_bitrate, 5000000)
         video_filter = f"{base_filter},scale=1280:-2,subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
         cmd = [
             "ffmpeg", "-i", clean_v_path, "-vf", video_filter, 
@@ -273,7 +268,6 @@ async def run_engine(client, status_msg, user_id):
             "-progress", "pipe:1", temp_output, "-y"
         ]
     else:
-        # MODO NORMAL: Tu configuración original
         video_filter = f"{base_filter},subtitles='{clean_s_path}':force_style='{style}',format=yuv420p"
         cmd = [
             "ffmpeg", "-i", clean_v_path, "-vf", video_filter, 
@@ -289,35 +283,82 @@ async def run_engine(client, status_msg, user_id):
         line = await process.stdout.readline()
         if not line or data["cancel"]: break
         text = line.decode().strip()
+        
+        # Extraer tiempo y velocidad de FFmpeg
         time_match = re.search(r"out_time=(\d{2}:\d{2}:\d{2})", text)
+        speed_match = re.search(r"speed=\s*(\d+\.?\d*)x", text)
+        
+        if speed_match: data["current_speed"] = speed_match.group(1)
+        
         if time_match:
             curr_sec = time_to_seconds(time_match.group(1))
-            perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
-            if (time.time() - data["last_upd"]) >= 5:
-                data["last_upd"] = time.time()
-                try: await status_msg.edit(f"🎬 **PROCESANDO ({data['mode'].upper()})**\n📊 **Progreso:** `{round(perc, 1)}%`...")
+            now = time.time()
+            if (now - data["last_upd"]) >= 5:
+                data["last_upd"] = now
+                perc = (curr_sec / total_duration) * 100 if total_duration > 0 else 0
+                
+                # Calcular ETA para el procesado
+                raw_speed = data["current_speed"]
+                try:
+                    f_speed = float(raw_speed) if raw_speed != "0.0" else 0.01
+                    eta_sec = (total_duration - curr_sec) / f_speed
+                    eta = time.strftime('%H:%M:%S', time.gmtime(max(0, eta_sec)))
+                except: eta = "00:00:00"
+                
+                bar = "▰" * int(perc / 10) + "▱" * (10 - int(perc / 10))
+                
+                status_text = (
+                    f"🎬 **PEGANDO SUBTÍTULOS ({data['mode'].upper()})**\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📊 **Progreso:** `{round(perc, 1)}%` | `|{bar}|` \n"
+                    f"⚡ **Velocidad:** `{raw_speed}x` \n"
+                    f"⏳ **Restante:** `{eta}`\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━"
+                )
+                
+                try: 
+                    await status_msg.edit(status_text, 
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
                 except: pass
 
     await process.wait()
     
+    if data["cancel"]: 
+        return await clean_up(user_id, v_path, s_path, temp_output)
+
     if os.path.exists(temp_output):
         final_output = f"downloads/{data['video_name']}"
+        if os.path.exists(final_output): os.remove(final_output)
         os.rename(temp_output, final_output)
         file_size = os.path.getsize(final_output)
         
         up_client = premium_client if (file_size > 2000*1024*1024 and premium_client) else bot
-        await up_client.send_video(
-            chat_id=chat_id, video=final_output, 
-            caption=f"✅ **¡Completado!**\n📦 **Modo:** `{data['mode'].upper()}`\n⚖️ **Peso:** `{humanbytes(file_size)}`",
-            supports_streaming=True, progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO")
-        )
-        await status_msg.delete()
+        mode_label = "PREMIUM 🌟" if up_client == premium_client else "BOT 🤖"
+        
+        await status_msg.edit(f"📤 **Subiendo:** `{data['video_name']}`\n⚡ **Vía:** {mode_label}")
+        
+        try:
+            d, width, height = get_video_info(final_output)
+            await up_client.send_video(
+                chat_id=chat_id, video=final_output, 
+                caption=f"✅ **¡Completado!**\n📦 **Modo:** `{data['mode'].upper()}`\n⚖️ **Peso:** `{humanbytes(file_size)}`",
+                duration=d, width=width, height=height, supports_streaming=True,
+                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
+            )
+            await status_msg.delete()
+        except Exception as e:
+            await status_msg.edit(f"❌ Error subida: {e}")
+            
         await clean_up(user_id, v_path, s_path, final_output)
 
 async def clean_up(user_id, v=None, s=None, o=None):
     for p in [v, s, o]:
-        if p and os.path.exists(p): os.remove(p)
-    if user_id in user_data: user_data[user_id]["process"] = None
+        if p and os.path.exists(p):
+            try: os.remove(p)
+            except: pass
+    if user_id in user_data: 
+        user_data[user_id]["process"] = None
+        user_data[user_id]["cancel"] = False
 
 if __name__ == "__main__":
     bot.run()
