@@ -28,15 +28,16 @@ def clear_downloads():
 
 clear_downloads()
 
-# --- INICIALIZACIÓN DE ALTO RENDIMIENTO ---
-# Aumentamos workers a 200 y habilitamos múltiples transmisiones concurrentes
+# --- INICIALIZACIÓN DE ALTO RENDIMIENTO OPTIMIZADA ---
+# max_concurrent_transmissions=4 es el punto dulce para maximizar subida sin ser bloqueado
 bot = Client(
     "HarsubBot", 
     api_id=Config.API_ID, 
     api_hash=Config.API_HASH, 
     bot_token=Config.BOT_TOKEN,
-    workers=200,
-    max_concurrent_transmissions=40  # Permite usar más ancho de banda en paralelo
+    workers=50,
+    sleep_threshold=120,
+    max_concurrent_transmissions=4 
 )
 
 premium_client = None
@@ -47,8 +48,8 @@ if hasattr(Config, "STRING_SESSION") and Config.STRING_SESSION:
         api_hash=Config.API_HASH, 
         session_string=Config.STRING_SESSION,
         sleep_threshold=120,
-        workers=200,
-        max_concurrent_transmissions=40
+        workers=50,
+        max_concurrent_transmissions=4
     )
 
 user_data = {}
@@ -76,7 +77,7 @@ def humanbytes(size):
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
-# --- PROGRESO (DESCARGA/SUBIDA) ---
+# --- PROGRESO (DESCARGA/SUBIDA) OPTIMIZADO ---
 async def progress_bar(current, total, status_msg, start_time, action):
     user_id = status_msg.chat.id
     if user_data.get(user_id, {}).get("cancel"):
@@ -86,14 +87,21 @@ async def progress_bar(current, total, status_msg, start_time, action):
     diff = now - start_time
     last_update = user_data.get(user_id, {}).get("last_upd", 0)
     
-    # Actualización cada 4 segundos para evitar spam pero mantener fluidez
-    if (now - last_update) < 4 and current != total:
+    # Actualización cada 5 segundos: CRÍTICO para mantener velocidad de subida alta
+    if (now - last_update) < 5 and current != total:
         return
 
     user_data[user_id]["last_upd"] = now
     percentage = current * 100 / total
     speed = current / diff if diff > 0 else 0
-    eta = time.strftime('%H:%M:%S', time.gmtime((total - current) / speed)) if speed > 0 else "00:00:00"
+    
+    # Cálculo de tiempo restante
+    if speed > 0:
+        eta_seconds = (total - current) / speed
+        eta = time.strftime('%H:%M:%S', time.gmtime(eta_seconds))
+    else:
+        eta = "00:00:00"
+
     bar = "▰" * int(percentage / 10) + "▱" * (10 - int(percentage / 10))
     
     msg = (
@@ -105,7 +113,11 @@ async def progress_bar(current, total, status_msg, start_time, action):
         f"⏳ **Restante:** `{eta}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
-    try: await status_msg.edit(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]]))
+    try: 
+        await status_msg.edit(
+            msg, 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛑 CANCELAR", callback_data="cancel_all")]])
+        )
     except: pass
 
 # --- MENÚ DE CONFIGURACIÓN ---
@@ -225,7 +237,6 @@ async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     chat_id = status_msg.chat.id
     
-    # Intentar reenviar al canal DUMP para acelerar la descarga vía servidores de Telegram
     video_to_download = data["video"]
     dl_client = client
     
@@ -261,7 +272,6 @@ async def run_engine(client, status_msg, user_id):
 
     base_filter = f"scale='iw*sar':'ih',setsar=1,scale=trunc(iw/2)*2:trunc(ih/2)*2"
     
-    # COMANDO FFmpeg OPTIMIZADO: '-threads 0' usa todo el CPU disponible
     if data["mode"] == "smart":
         target_size_bits = 1900 * 1024 * 1024 * 8 
         calculated_bitrate = int((target_size_bits / total_duration) * 0.9)
@@ -333,11 +343,13 @@ async def run_engine(client, status_msg, user_id):
         
         try:
             d, width, height = get_video_info(final_output)
+            # Iniciamos el contador de tiempo para la subida
+            start_up_time = time.time()
             await up_client.send_video(
                 chat_id=chat_id, video=final_output, 
                 caption=f"✅ **¡Completado!**\n⚖️ **Peso:** `{humanbytes(file_size)}`",
                 duration=d, width=width, height=height, supports_streaming=True,
-                progress=progress_bar, progress_args=(status_msg, time.time(), "SUBIENDO RESULTADO")
+                progress=progress_bar, progress_args=(status_msg, start_up_time, "SUBIENDO RESULTADO")
             )
             await status_msg.delete()
         except Exception as e:
