@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  hardsub-bot:
+    build: .
+    container_name: hardsub_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Aísla las carpetas mapeando el almacenamiento local con el interno del bot
+      - ./hardownload/downloads:/usr/src/app/downloads
+      - ./hardownload/output:/usr/src/app/output
