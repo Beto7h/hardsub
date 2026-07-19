@@ -1,5 +1,3 @@
----
-
 ## 📱 ¿Cómo usar el Bot en Telegram?
 
 Una vez que el bot esté encendido en tu VPS, interactuar con él es sumamente sencillo. Sigue este flujo lógico de comandos para procesar tus videos:
