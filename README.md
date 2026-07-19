@@ -91,7 +91,7 @@ chmod -R 777 hardownload
 Ejecuta el comando de Docker Compose para compilar la imagen de FFmpeg y poner a correr el bot de manera persistente en segundo plano (modo detached):
 
 ```bash
-docker compose up -d --build
+sudo docker compose up -d --build
 
 ```
 
