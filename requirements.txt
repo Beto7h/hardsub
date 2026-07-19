@@ -1,4 +1,4 @@
-pyrogram
+wzgram
 tgcrypto
 python-dotenv
 hachoir
