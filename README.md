@@ -1,100 +1,103 @@
-# 🎬 Harsub Bot - Auto Subtitle Burner
+🎬 Hardsub Telegram Bot (Beto7h/hardsub)
+Un potente bot de Telegram auto-alojable escrito en Python para automatizar el proceso de Hardsubbing (pegar/incrustar subtítulos de forma permanente en un video) utilizando la potencia de procesamiento de FFmpeg.
 
-Este bot de Telegram permite "quemar" (pegar) subtítulos externos en formato `.srt` a archivos de video `.mp4`. Está optimizado para trabajar con archivos grandes (más de 2GB) mediante la integración de una cuenta **Telegram Premium**.
+Este bot incluye soporte para String Sessions de Telegram Premium, permitiéndote saltar el límite tradicional de 2 GB de Telegram y descargar o subir archivos de hasta 4 GB sin restricciones.
 
----
+✨ Características Principales
+Automatización Completa: Envíale un video y un archivo de subtítulos (.srt o .ass), y el bot se encargará del resto.
 
-## 🚀 Métodos de Despliegue
+Aislamiento Total: El almacenamiento está diseñado para guardarse en la carpeta local hardownload/, evitando que tus archivos colisionen si tienes otros bots alojados en el mismo servidor.
 
-### 1. Despliegue en VPS (Ubuntu/Debian vía Putty)
-Este es el método recomendado para procesar videos pesados, ya que FFmpeg consume bastantes recursos.
+Soporte Premium (Hasta 4 GB): Capacidad para procesar archivos grandes usando una sesión de usuario Premium en segundo plano.
 
-**Paso 1: Actualizar el servidor e instalar dependencias**
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install python3 python3-pip ffmpeg screen -y
-```
+Despliegue con Un Solo Comando: Configurado nativamente para compilarse y correr en contenedores de Docker.
 
-**Paso 2: Clonar el repositorio**
-```bash
-git clone https://github.com/TU_USUARIO/TU_REPOSITORIO.git
-cd TU_REPOSITORIO
-```
+🛠️ Requisitos Previos
+Antes de realizar el despliegue, asegúrate de obtener las siguientes credenciales de Telegram:
 
-**Paso 3: Instalar librerías de Python**
-```bash
-pip3 install -r requirements.txt
-```
+API_ID y API_HASH: Se obtienen registrando una aplicación en my.telegram.org.
 
-**Paso 4: Configurar credenciales**
-Edita el archivo `config.py` con tus datos (API_ID, HASH, TOKEN, etc.):
-```bash
-nano config.py
-```
+BOT_TOKEN: Crea tu bot en Telegram conversando con @BotFather.
 
-**Paso 5: Ejecutar con Screen (Para que no se apague)**
-```bash
-screen -S harsub
-python3 bot.py
-```
-*(Para salir de la consola sin cerrar el bot: `Ctrl + A` y luego `D`. Para volver: `screen -r harsub`)*.
+DUMP_CHAT_ID: Crea un canal privado en Telegram, añade a tu bot como Administrador y obtén su ID única (debe empezar con -100). El bot usará este canal como almacenamiento temporal.
 
----
+STRING_SESSION (Opcional): Si deseas procesar archivos de más de 2 GB (hasta 4 GB), es necesario generar un String Session usando una cuenta con Telegram Premium activo.
 
-### 2. Despliegue en Koyeb (PaaS)
-Ideal para despliegues rápidos y gratuitos/baratos.
+🚀 Despliegue en un VPS usando Docker (Vía PuTTY)
+Este es el método de instalación recomendado. Docker empaqueta automáticamente todas las dependencias críticas (como Python y FFmpeg) sin alterar el sistema operativo de tu servidor.
 
-1.  **Conecta tu GitHub:** Crea un nuevo "Service" y selecciona este repositorio.
-2.  **Variables de Entorno:** No edites el `config.py`. En el panel de Koyeb, agrega las siguientes variables:
-    * `API_ID`
-    * `API_HASH`
-    * `BOT_TOKEN`
-    * `DUMP_CHAT_ID`
-    * `STRING_SESSION` (Opcional, para >2GB)
-3.  **Comandos:**
-    * Build Command: `pip install -r requirements.txt`
-    * Run Command: `python3 bot.py`
-4.  **Instance:** Selecciona una instancia con al menos 1GB de RAM.
+Paso 1: Conéctate a tu servidor
+Abre PuTTY, ingresa la IP de tu VPS y accede como usuario root (o un usuario con privilegios sudo).
 
----
+Paso 2: Clonar el Repositorio
+Descarga el código del proyecto y accede al directorio raíz:
 
-## 🛠️ Configuración (`config.py`)
+Bash
+git clone https://github.com/Beto7h/hardsub.git
+cd hardsub
+Paso 3: Configurar el Archivo de Entorno (.env)
+Por motivos de seguridad, las credenciales reales nunca deben subirse a GitHub. Debes crear un archivo local .env en tu VPS:
 
-| Variable | Descripción |
-| :--- | :--- |
-| `API_ID` | ID de API obtenido en my.telegram.org |
-| `API_HASH` | Hash de API obtenido en my.telegram.org |
-| `BOT_TOKEN` | Token de tu bot obtenido en @BotFather |
-| `DUMP_CHAT_ID` | ID del canal (debe empezar con -100) |
-| `STRING_SESSION` | Sesión Pyrogram de cuenta Premium (opcional) |
+Bash
+nano .env
+Pega el siguiente bloque de configuración y reemplaza los valores con tus credenciales reales:
 
----
+Fragmento de código
+API_ID=1234567
+API_HASH=tu_api_hash_aqui
+BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
+DUMP_CHAT_ID=-1001234567890
 
-## 📖 Modo de Uso
+# Deja esta línea vacía si no usas una cuenta Premium
+STRING_SESSION=
 
-1.  Usa el comando `/start` para activar el bot.
-2.  Envía el **Video** que deseas procesar.
-3.  Envía el archivo **.srt** de subtítulos.
-4.  Personaliza el estilo (Color, Tamaño, Posición) en el menú interactivo.
-5.  Presiona **🚀 INICIAR PROCESO**.
-6.  El bot enviará el video terminado al chat. 
-    * Si el video pesa **< 2GB**, lo envía el Bot.
-    * Si el video pesa **> 2GB**, lo envía tu cuenta Premium automáticamente.
+# Parámetros avanzados (Opcional modificarlos)
+DOWNLOAD_LOCATION=./downloads
+DEFAULT_COLOR=&HFFFFFF
+DEFAULT_FONT_NAME=Arial
+DEFAULT_FONT_SIZE=24
+DEFAULT_PRESET=veryfast
+DEFAULT_CRF=24
+Para guardar los cambios en el editor Nano, presiona Ctrl + O, luego Enter. Para salir, presiona Ctrl + X.
 
----
+Paso 4: Inicializar Almacenamiento Aislado
+Crea las carpetas físicas en donde el bot guardará las descargas y dale los permisos necesarios a Docker:
 
-## 📂 Requisitos del Sistema
-El archivo `requirements.txt` debe incluir:
-* `pyrogram`
-* `tgcrypto`
-* `hachoir`
+Bash
+mkdir -p hardownload/downloads hardownload/output
+chmod -R 777 hardownload
+Paso 5: Construir y Encender el Bot
+Ejecuta el comando de Docker Compose para compilar la imagen de FFmpeg y poner a correr el bot de manera persistente en segundo plano (modo detached):
 
----
+Bash
+docker compose up -d --build
+¡Listo! El bot ya estará activo en Telegram y puedes cerrar tu ventana de PuTTY con total seguridad.
 
-## ⚠️ Notas de Seguridad
-* **IMPORTANTE:** No subas tu archivo `.session` o tu `config.py` real a GitHub si el repositorio es público.
-* Asegúrate de que tanto el Bot como la cuenta Premium sean **Administradores** en el canal de Dump.
+📊 Comandos de Mantenimiento Útiles
+Puedes administrar el contenedor ejecutando estos comandos desde la carpeta hardsub en tu VPS:
 
----
+Monitorear la actividad (Logs en tiempo real): Ideal para verificar el progreso del procesamiento de video de FFmpeg o cazar errores.
 
-**Desarrollado con ❤️ por Beto.**
+Bash
+docker compose logs -f --tail 50
+Reiniciar el bot:
+
+Bash
+docker compose restart
+Detener el bot por completo:
+
+Bash
+docker compose down
+Actualizar el bot: Si se suben nuevas mejoras a este repositorio de GitHub, actualiza tu servidor en segundos corriendo:
+
+Bash
+git pull
+docker compose up -d --build
+🎨 Ajustes de Subtítulos (FFmpeg)
+Si deseas cambiar el diseño por defecto de los subtítulos incrustados, edita los valores correspondientes en tu archivo .env:
+
+DEFAULT_COLOR: Código de color en formato Hexadecimal inverso para subtítulos ASS (&H[BGR]). El valor &HFFFFFF representa blanco puro.
+
+DEFAULT_PRESET: Regula la velocidad de codificación de FFmpeg (ultrafast, superfast, veryfast, faster, fast, medium). El valor veryfast ofrece el balance óptimo en un VPS para no congelar la CPU.
+
+DEFAULT_CRF: Controla la calidad visual final. Escala de 0 a 51. Valores comunes recomendados entre 18 (máxima calidad / archivo pesado) y 28 (menor calidad / archivo liviano). El valor predeterminado es 24.
