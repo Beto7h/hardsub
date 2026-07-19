@@ -105,21 +105,21 @@ Puedes administrar el contenedor ejecutando estos comandos desde la carpeta `har
 
 * **Monitorear la actividad (Logs en tiempo real):** Ideal para verificar el progreso del procesamiento de video de FFmpeg o cazar errores.
 ```bash
-docker compose logs -f --tail 50
+sudo docker compose logs -f --tail 50
 
 ```
 
 
 * **Reiniciar el bot:**
 ```bash
-docker compose restart
+sudo docker compose restart
 
 ```
 
 
 * **Detener el bot por completo:**
 ```bash
-docker compose down
+sudo docker compose down
 
 ```
 
@@ -127,7 +127,7 @@ docker compose down
 * **Actualizar el bot:** Si se suben nuevas mejoras a este repositorio de GitHub, actualiza tu servidor en segundos corriendo:
 ```bash
 git pull
-docker compose up -d --build
+sudo docker compose up -d --build
 
 ```
 
