@@ -143,9 +143,9 @@ def get_config_menu(user_id):
     pos_name = {2: "Centro-Abajo 👇", 1: "Izquierda-Abajo 👈", 3: "Derecha-Abajo 👉"}.get(data['alignment'], "Centro-Abajo 👇")
     
     text = (
-        "🎬(tg://emoji?id=5375464961822695044) **AJUSTES DE PROCESAMIENTO**\n"
+        "[🎬](tg://emoji?id=5375464961822695044) **AJUSTES DE PROCESAMIENTO**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎨(tg://emoji?id=5431456208487716895) **Color:** `{c_name}`\n"
+        f"[🎨](tg://emoji?id=5431456208487716895) **Color:** `{c_name}`\n"
         f"🔡 **Fuente:** `{data['font']}`\n"
         f"📏 **Tamaño:** `{data['size']}px`\n"
         f"🖋️ **Contorno:** `{out_name}`\n"
