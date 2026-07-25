@@ -29,7 +29,6 @@ def clear_downloads():
 clear_downloads()
 
 # --- INICIALIZACIÓN DE ALTO RENDIMIENTO OPTIMIZADA ---
-# max_concurrent_transmissions=4 es el punto dulce para maximizar subida sin ser bloqueado
 bot = Client(
     "HarsubBot", 
     api_id=Config.API_ID, 
@@ -55,6 +54,22 @@ if hasattr(Config, "STRING_SESSION") and Config.STRING_SESSION:
 user_data = {}
 
 # --- UTILIDADES ---
+async def extraer_miniatura(ruta_video, ruta_imagen):
+    """Extrae un fotograma del video asíncronamente para usarlo como miniatura."""
+    comando = [
+        "ffmpeg", "-y", 
+        "-ss", "00:00:50", # Extrae en el segundo 2
+        "-i", ruta_video, 
+        "-vframes", "1", 
+        "-q:v", "2", 
+        ruta_imagen
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(*comando, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await process.wait()
+    except: pass
+    return ruta_imagen
+
 def get_video_info(file_path):
     try:
         metadata = extractMetadata(createParser(file_path))
@@ -87,7 +102,6 @@ async def progress_bar(current, total, status_msg, start_time, action):
     diff = now - start_time
     last_update = user_data.get(user_id, {}).get("last_upd", 0)
     
-    # Actualización cada 5 segundos: CRÍTICO para mantener velocidad de subida alta
     if (now - last_update) < 5 and current != total:
         return
 
@@ -95,7 +109,6 @@ async def progress_bar(current, total, status_msg, start_time, action):
     percentage = current * 100 / total
     speed = current / diff if diff > 0 else 0
     
-    # Cálculo de tiempo restante
     if speed > 0:
         eta_seconds = (total - current) / speed
         eta = time.strftime('%H:%M:%S', time.gmtime(eta_seconds))
@@ -236,6 +249,7 @@ async def callbacks(client, query: CallbackQuery):
 async def run_engine(client, status_msg, user_id):
     data = user_data[user_id]
     chat_id = status_msg.chat.id
+    ruta_thumb = None
     
     video_to_download = data["video"]
     dl_client = client
@@ -331,7 +345,7 @@ async def run_engine(client, status_msg, user_id):
 
     await process.wait()
     
-    if data["cancel"]: return await clean_up(user_id, v_path, s_path, temp_output)
+    if data["cancel"]: return await clean_up(user_id, v_path, s_path, temp_output, ruta_thumb)
 
     if os.path.exists(temp_output):
         final_output = f"downloads/{data['video_name']}"
@@ -339,14 +353,20 @@ async def run_engine(client, status_msg, user_id):
         os.rename(temp_output, final_output)
         file_size = os.path.getsize(final_output)
         
+        # --- NUEVO: EXTRAER MINIATURA ---
+        ruta_thumb = f"downloads/thumb_{user_id}.jpg"
+        await extraer_miniatura(final_output, ruta_thumb)
+        thumb_path_to_send = ruta_thumb if os.path.exists(ruta_thumb) else None
+        # --------------------------------
+        
         up_client = premium_client if (file_size > 2000*1024*1024 and premium_client) else bot
         
         try:
             d, width, height = get_video_info(final_output)
-            # Iniciamos el contador de tiempo para la subida
             start_up_time = time.time()
             await up_client.send_video(
                 chat_id=chat_id, video=final_output, 
+                thumb=thumb_path_to_send, # <-- MINIATURA AÑADIDA AQUÍ
                 caption=f"✅ **¡Completado!**\n⚖️ **Peso:** `{humanbytes(file_size)}`",
                 duration=d, width=width, height=height, supports_streaming=True,
                 progress=progress_bar, progress_args=(status_msg, start_up_time, "SUBIENDO RESULTADO")
@@ -355,10 +375,11 @@ async def run_engine(client, status_msg, user_id):
         except Exception as e:
             await status_msg.edit(f"❌ Error subida: {e}")
             
-        await clean_up(user_id, v_path, s_path, final_output)
+        await clean_up(user_id, v_path, s_path, final_output, ruta_thumb)
 
-async def clean_up(user_id, v=None, s=None, o=None):
-    for p in [v, s, o]:
+# --- FUNCIÓN DE LIMPIEZA ACTUALIZADA PARA BORRAR LA MINIATURA ---
+async def clean_up(user_id, v=None, s=None, o=None, t=None):
+    for p in [v, s, o, t]:
         if p and os.path.exists(p):
             try: os.remove(p)
             except: pass
