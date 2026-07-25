@@ -181,7 +181,7 @@ def get_config_menu(user_id):
 # --- COMANDOS ---
 @bot.on_message(filters.command("start"))
 async def start_cmd(client, message):
-    await message.reply("[👋] (tg://emoji?id=5113873540503831587) ¡Hola! Envíame un **video** para comenzar.")
+    await message.reply("[👋](tg://emoji?id=5113873540503831587) ¡Hola! Envíame un **video** para comenzar.")
 
 @bot.on_message(filters.video | filters.document)
 async def handle_files(client, message):
